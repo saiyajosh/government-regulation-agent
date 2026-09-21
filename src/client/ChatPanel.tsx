@@ -1,18 +1,12 @@
 import type { useFlueAgent } from '@flue/react';
-import { Loader2, MessageSquareText, SendHorizontal, Wrench } from 'lucide-react';
+import { Loader2, SendHorizontal, Wrench } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import {
-	Empty,
-	EmptyDescription,
-	EmptyHeader,
-	EmptyMedia,
-	EmptyTitle,
-} from '@/components/ui/empty';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Textarea } from '@/components/ui/textarea';
 import { cn } from '@/lib/utils';
+import { Welcome } from './Welcome.tsx';
 
 export function ChatPanel({
 	agent,
@@ -25,16 +19,22 @@ export function ChatPanel({
 	const bottomRef = useRef<HTMLDivElement>(null);
 	const busy = agent.status === 'submitted' || agent.status === 'streaming';
 
+	// Skip on the empty state so the welcome screen isn't scrolled off the top.
 	useEffect(() => {
+		if (agent.messages.length === 0) return;
 		bottomRef.current?.scrollIntoView({ block: 'end' });
 	}, [agent.messages]);
 
-	async function submit(event?: React.FormEvent) {
-		event?.preventDefault();
-		const message = input.trim();
+	async function send(text: string) {
+		const message = text.trim();
 		if (!message || busy) return;
 		setInput('');
 		await agent.sendMessage(message);
+	}
+
+	function submit(event?: React.FormEvent) {
+		event?.preventDefault();
+		void send(input);
 	}
 
 	const visible = agent.messages.filter((message) => message.display === 'visible');
@@ -43,20 +43,7 @@ export function ChatPanel({
 		<section className={cn('flex min-h-0 flex-col', className)}>
 			<ScrollArea className="min-h-0 flex-1">
 				<div className="mx-auto flex w-full max-w-3xl flex-col gap-4 p-4" aria-live="polite">
-					{visible.length === 0 && (
-						<Empty className="mt-16 border-0">
-							<EmptyHeader>
-								<EmptyMedia variant="icon">
-									<MessageSquareText />
-								</EmptyMedia>
-								<EmptyTitle>Ask about a law or regulation</EmptyTitle>
-								<EmptyDescription>
-									Federal, state, county, or municipal — e.g. “What does the Administrative
-									Procedure Act require of agencies?”
-								</EmptyDescription>
-							</EmptyHeader>
-						</Empty>
-					)}
+					{visible.length === 0 && <Welcome onPrompt={send} disabled={busy} />}
 					{visible.map((message) => (
 						<article
 							key={message.id}
