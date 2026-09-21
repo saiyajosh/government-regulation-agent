@@ -14,6 +14,14 @@
 	// Workers AI binding: lets useModel('cloudflare/...') run keyless, with no
 	// external provider API key required.
 	"ai": { "binding": "AI" },
+	// Non-secret config for the BYOK Anthropic route through AI Gateway (see
+	// src/agents/regulation-agent.ts). The gateway token itself is a secret:
+	//   wrangler secret put CLOUDFLARE_API_KEY
+	"vars": {
+		"CLOUDFLARE_ACCOUNT_ID": "936ee2c1aad5bf0e8ec4f3a612a613e1",
+		"CLOUDFLARE_GATEWAY_ID": "default",
+		"CLOUDFLARE_AI_GATEWAY_BYOK_ALIAS": "anthropic-takehome-project-key",
+	},
 	// Application-owned resources only; Flue's own FLUE_* bindings are
 	// generated automatically and merged in at build time.
 	"r2_buckets": [
