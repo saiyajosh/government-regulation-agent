@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { cn } from '@/lib/utils';
 import type { ExplainInput } from '../lib/explain.ts';
 import { ExplainCard, ExplainPrompt } from './ExplainCard.tsx';
 import type { DocumentRecord } from './types.ts';
@@ -11,7 +12,13 @@ import type { DocumentRecord } from './types.ts';
 // under it, and ⌘/ (or Ctrl+/) opens the question prompt. Answers are
 // portaled into a host <div> inserted directly after the block the selection
 // ended in, so the React-owned document/chat trees are never mutated.
-export function SelectionExplain({ openDocs }: { openDocs: DocumentRecord[] }) {
+export function SelectionExplain({
+	openDocs,
+	chatStarted,
+}: {
+	openDocs: DocumentRecord[];
+	chatStarted: boolean;
+}) {
 	const [pending, setPending] = useState<Pending | null>(null);
 	// Mirror for the native listeners, which must read the latest value without
 	// smuggling side effects into a state updater.
@@ -108,6 +115,19 @@ export function SelectionExplain({ openDocs }: { openDocs: DocumentRecord[] }) {
 		setPending(null);
 	}
 
+	// A once-per-session nudge for ~10 seconds when the chat first begins,
+	// unless the user has already selected something by then.
+	const [nudge, setNudge] = useState(false);
+	useEffect(() => {
+		if (!chatStarted || !claimNudge()) return;
+		setNudge(true);
+		const timer = setTimeout(() => setNudge(false), 10_000);
+		return () => clearTimeout(timer);
+	}, [chatStarted]);
+	useEffect(() => {
+		if (pending) setNudge(false);
+	}, [pending]);
+
 	// Sit below the selection, or above it when the prompt would run off the
 	// bottom of the viewport (replies in the chat usually end right there).
 	const placement = pending
@@ -118,6 +138,14 @@ export function SelectionExplain({ openDocs }: { openDocs: DocumentRecord[] }) {
 
 	return (
 		<>
+			{nudge && !pending && (
+				<div className="pointer-events-none fixed bottom-20 left-1/2 z-40 -translate-x-1/2 animate-in fade-in slide-in-from-bottom-1 duration-300">
+					<div className={cn(hintPill, 'px-3 py-1.5')}>
+						Highlight any text and ask a question to dig in with
+						<kbd className={hintKbd}>{isMac ? '⌘/' : 'Ctrl+/'}</kbd>
+					</div>
+				</div>
+			)}
 			{pending && placement && (
 				<div data-explain-ui className="fixed z-50" style={{ ...placement, left: pending.left }}>
 					{pending.prompt ? (
@@ -151,6 +179,18 @@ export function SelectionExplain({ openDocs }: { openDocs: DocumentRecord[] }) {
 	);
 }
 
+const NUDGE_STORAGE_KEY = 'gra:explain-nudge-shown';
+
+function claimNudge() {
+	try {
+		if (sessionStorage.getItem(NUDGE_STORAGE_KEY)) return false;
+		sessionStorage.setItem(NUDGE_STORAGE_KEY, '1');
+		return true;
+	} catch {
+		return true;
+	}
+}
+
 type Pending = {
 	text: string;
 	block: HTMLElement;
@@ -169,12 +209,17 @@ const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigat
 
 // The minimal command list shown under a settled selection. One command today;
 // the list shape leaves room for more.
+const hintPill =
+	'flex items-center gap-2 rounded-md border border-violet-300 bg-violet-50/95 text-xs text-violet-800 shadow-sm backdrop-blur dark:border-violet-800 dark:bg-violet-950/95 dark:text-violet-200';
+const hintKbd =
+	'rounded border border-violet-300 bg-violet-100 px-1 font-mono text-[10px] text-violet-900 dark:border-violet-700 dark:bg-violet-900 dark:text-violet-100';
+
 function ShortcutHint({ onActivate }: { onActivate: () => void }) {
 	return (
-		<div className="flex items-center gap-2 rounded-md border bg-popover/95 px-2 py-1 text-xs text-muted-foreground shadow-sm backdrop-blur">
+		<div className={cn(hintPill, 'px-2 py-1')}>
 			<button
 				type="button"
-				className="flex items-center gap-2 hover:text-foreground"
+				className="flex items-center gap-2 hover:text-violet-950 dark:hover:text-white"
 				// mousedown, not click: a click would first collapse the selection.
 				onMouseDown={(event) => {
 					event.preventDefault();
@@ -182,9 +227,7 @@ function ShortcutHint({ onActivate }: { onActivate: () => void }) {
 				}}
 			>
 				Ask a question
-				<kbd className="rounded border bg-muted px-1 font-mono text-[10px] text-foreground/70">
-					{isMac ? '⌘/' : 'Ctrl+/'}
-				</kbd>
+				<kbd className={hintKbd}>{isMac ? '⌘/' : 'Ctrl+/'}</kbd>
 			</button>
 		</div>
 	);
