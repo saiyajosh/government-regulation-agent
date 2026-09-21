@@ -1,7 +1,7 @@
 'use agent';
 import { getCloudflareContext } from '@flue/runtime/cloudflare';
 import { defineTool, useDataWriter, useModel, useTool } from '@flue/runtime';
-import * as v from 'valibot';
+import { object, string } from 'valibot';
 import { getDocument, listDocuments, searchDocuments } from '../lib/documents.ts';
 
 function bucket() {
@@ -12,7 +12,7 @@ const searchLaws = defineTool({
 	name: 'search_laws',
 	description:
 		'Search the grounded document library for federal, state, county, or municipal acts, laws, regulations, and statutes matching a query (title, jurisdiction, or citation).',
-	input: v.object({ query: v.string() }),
+	input: object({ query: string() }),
 	async run({ data }) {
 		const results = await searchDocuments(bucket(), data.query);
 		return {
@@ -49,7 +49,7 @@ function openLaw(writeOpenDocument: WriteOpenDocument) {
 		name: 'open_law',
 		description:
 			'Open a specific document by its key in the Resources panel so the user can read the full, sourced text, and return that text so you can quote or reason about it.',
-		input: v.object({ key: v.string() }),
+		input: object({ key: string() }),
 		async run({ data }) {
 			const doc = await getDocument(bucket(), data.key);
 			if (!doc) return { output: { error: `No document found for key "${data.key}".` } };
@@ -78,7 +78,7 @@ export function RegulationAgent() {
 	useModel('cloudflare/@cf/mistralai/mistral-small-3.1-24b-instruct');
 
 	const writeOpenDocument = useDataWriter('openDocument', {
-		schema: v.object({ key: v.string(), title: v.string() }),
+		schema: object({ key: string(), title: string() }),
 	});
 	useTool(searchLaws);
 	useTool(listLaws);
