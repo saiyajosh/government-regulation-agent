@@ -5,3 +5,4 @@ dist/
 .flue-vite/
 .flue-vite.wrangler.jsonc
 worker-configuration.d.ts
+seed/
