@@ -648,7 +648,11 @@ for (const [name, run] of selected) {
 			}
 			stats.uploaded += 1;
 			if (stats.uploaded % 100 === 0) console.log(`  [${name}] ${stats.uploaded} uploaded`);
-		})();
+		})().catch((error: unknown) => {
+			// A failed download or upload must not take the whole run down.
+			stats.failed += 1;
+			console.error(`  ✗ ${doc.key}: ${error instanceof Error ? error.message : error}`);
+		});
 		inFlight.add(task);
 		task.finally(() => inFlight.delete(task));
 		// Back-pressure: hold the source until a slot frees up.
@@ -738,11 +742,11 @@ async function ecfrDate() {
 // Retry transient failures with backoff; the sources rate-limit bursts.
 async function request(url: string, attempt = 0): Promise<Response> {
 	const response = await fetch(url, { headers: HEADERS }).catch((error: unknown) => {
-		if (attempt >= 4) throw error;
+		if (attempt >= 6) throw error;
 		return null;
 	});
 	if (response?.ok) return response;
-	if (attempt >= 4 || (response && response.status < 500 && response.status !== 429)) {
+	if (attempt >= 6 || (response && response.status < 500 && response.status !== 429)) {
 		throw new Error(`${response?.status ?? 'network'} ${url}`);
 	}
 	await new Promise((resolve) => setTimeout(resolve, 500 * 2 ** attempt));
