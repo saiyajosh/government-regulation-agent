@@ -47,6 +47,8 @@ export function ChatPanel({
 					{visible.map((message) => (
 						<article
 							key={message.id}
+							// Selecting text in a reply enables the explain shortcut (see SelectionExplain).
+							data-explain-region={message.role === 'assistant' ? 'chat' : undefined}
 							className={cn(
 								'flex max-w-[85%] flex-col gap-2 rounded-xl px-3.5 py-2.5 text-sm',
 								message.role === 'user'

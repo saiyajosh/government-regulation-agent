@@ -1,4 +1,4 @@
-import { ArrowRight, BookOpenText, Landmark, Quote, Search } from 'lucide-react';
+import { ArrowRight, BookOpenText, Landmark, MessageCircleQuestion, Quote, Search } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 const CAPABILITIES = [
@@ -23,6 +23,30 @@ const STEPS = [
 	{ label: 'Ask', body: 'Describe the law, rule, or situation in plain language.' },
 	{ label: 'Research', body: 'The agent searches the library and opens what matters.' },
 	{ label: 'Verify', body: 'Read the cited text side by side with the answer.' },
+];
+
+const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
+
+// Screenshots live in public/explain and are captured from the running app.
+const EXPLAIN_STEPS = [
+	{
+		src: '/explain/1-highlight.png',
+		alt: 'A phrase highlighted in a document with a small "Ask a question" hint beneath it',
+		title: 'Highlight',
+		body: 'Select any passage in a document or a reply. A small hint appears under it.',
+	},
+	{
+		src: '/explain/2-ask.png',
+		alt: 'A question typed into the purple prompt that opened under the highlighted phrase',
+		title: 'Ask',
+		body: 'Press the shortcut and type one focused question about that text.',
+	},
+	{
+		src: '/explain/3-answer.png',
+		alt: 'A concise answer card inserted directly below the paragraph',
+		title: 'Read',
+		body: 'A short answer, grounded only in that text, appears right below the passage.',
+	},
 ];
 
 const PROMPTS = [
@@ -94,6 +118,37 @@ export function Welcome({ onPrompt, disabled }: { onPrompt: (text: string) => vo
 			</section>
 
 			<section className="flex flex-col gap-3 animate-in fade-in slide-in-from-bottom-2 duration-500 delay-450 fill-mode-both">
+				<div className="flex items-center gap-2">
+					<MessageCircleQuestion className="size-3.5 text-violet-600 dark:text-violet-400" />
+					<h3 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
+						Dig into any passage
+					</h3>
+					<kbd className="rounded border border-violet-300 bg-violet-50 px-1 font-mono text-[10px] text-violet-900 dark:border-violet-700 dark:bg-violet-950 dark:text-violet-100">
+						{isMac ? '⌘/' : 'Ctrl+/'}
+					</kbd>
+				</div>
+				<div className="grid gap-3 sm:grid-cols-3">
+					{EXPLAIN_STEPS.map((step) => (
+						<figure
+							key={step.title}
+							className="flex flex-col gap-2 overflow-hidden rounded-xl border border-violet-200 bg-violet-50/40 dark:border-violet-900 dark:bg-violet-950/30"
+						>
+							<img
+								src={step.src}
+								alt={step.alt}
+								loading="lazy"
+								className="aspect-[2/1] w-full border-b border-violet-200 object-cover object-left-top dark:border-violet-900"
+							/>
+							<figcaption className="flex flex-col gap-0.5 px-3 pb-3">
+								<span className="text-sm font-medium">{step.title}</span>
+								<span className="text-xs leading-relaxed text-muted-foreground">{step.body}</span>
+							</figcaption>
+						</figure>
+					))}
+				</div>
+			</section>
+
+			<section className="flex flex-col gap-3 animate-in fade-in slide-in-from-bottom-2 duration-500 delay-600 fill-mode-both">
 				<h3 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
 					Try asking
 				</h3>
