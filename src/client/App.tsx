@@ -4,6 +4,7 @@ import { Landmark } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { ChatPanel } from './ChatPanel.tsx';
 import { ResourcesPanel } from './ResourcesPanel.tsx';
+import { SelectionExplain } from './SelectionExplain.tsx';
 import type { DocumentRecord } from './types.ts';
 
 const CONVERSATION_STORAGE_KEY = 'gra:conversation-id';
@@ -80,6 +81,7 @@ export function App() {
 					/>
 				)}
 			</main>
+			<SelectionExplain openDocs={openDocs} />
 		</div>
 	);
 }

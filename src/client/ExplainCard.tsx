@@ -3,7 +3,7 @@ import { Loader2, MessageCircleQuestion, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import type { DocumentRecord } from './types.ts';
+import type { ExplainInput } from '../lib/explain.ts';
 
 // The floating prompt that appears under a fresh selection. It only collects
 // the question; the answer lives in an ExplainCard inserted below the block.
@@ -52,15 +52,11 @@ export function ExplainPrompt({
 // travel as `initialData` on the single send, and nothing contacts that
 // conversation again after it settles.
 export function ExplainCard({
-	doc,
-	selection,
-	context,
+	input,
 	question,
 	onDismiss,
 }: {
-	doc: DocumentRecord;
-	selection: string;
-	context: string;
+	input: ExplainInput;
 	question: string;
 	onDismiss: () => void;
 }) {
@@ -79,25 +75,18 @@ export function ExplainCard({
 	useEffect(() => {
 		if (sent.current) return;
 		sent.current = true;
-		void agent.sendMessage(question, {
-			initialData: {
-				key: doc.key,
-				title: doc.title,
-				jurisdiction: doc.jurisdiction,
-				citation: doc.citation,
-				body: doc.body,
-				selection,
-				context,
-			},
-		});
+		void agent.sendMessage(question, { initialData: input });
 	}, []);
 
 	return (
-		<aside className="not-prose my-3 flex flex-col gap-2 rounded-lg border bg-muted/40 p-3 text-sm">
+		<aside
+			data-explain-ui
+			className="not-prose my-3 flex flex-col gap-2 rounded-lg border bg-background p-3 text-sm"
+		>
 			<div className="flex items-start gap-2">
 				<MessageCircleQuestion className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
 				<blockquote className="line-clamp-3 flex-1 border-l-2 pl-2 text-muted-foreground italic">
-					{selection}
+					{input.selection}
 				</blockquote>
 				<Button
 					variant="ghost"
