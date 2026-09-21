@@ -1,7 +1,7 @@
 import { createAgentRouter } from '@flue/runtime/routing';
 import { Hono } from 'hono';
 import { RegulationAgent } from './agents/regulation-agent.ts';
-import { getDocument } from './lib/documents.ts';
+import { getDocument, putDocument } from './lib/documents.ts';
 
 const app = new Hono();
 
@@ -23,6 +23,19 @@ app.get('/api/documents/:key{.+}', async (c) => {
 	const doc = await getDocument(bucket, c.req.param('key'));
 	if (!doc) return c.json({ error: 'not found' }, 404);
 	return c.json(doc);
+});
+
+// Ingest a document (Markdown with frontmatter) into the library. Wrangler
+// cannot set R2 custom metadata, and AI Search reads its filter fields only
+// from that metadata, so scripts/seed.ts uploads through here instead.
+// Guarded by the SEED_TOKEN secret: `wrangler secret put SEED_TOKEN` (or .env).
+app.put('/api/documents/:key{.+}', async (c) => {
+	const env = c.env as Env & { SEED_TOKEN?: string };
+	const authorized =
+		env.SEED_TOKEN && c.req.header('authorization') === `Bearer ${env.SEED_TOKEN}`;
+	if (!authorized) return c.json({ error: 'unauthorized' }, 401);
+	const doc = await putDocument(env.DOCUMENTS_BUCKET, c.req.param('key'), await c.req.text());
+	return c.json({ key: doc.key, title: doc.title, jurisdiction: doc.jurisdiction });
 });
 
 export default app;
