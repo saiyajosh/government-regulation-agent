@@ -1,4 +1,4 @@
-import { ExternalLink, MessageCircleQuestion, X } from 'lucide-react';
+import { ExternalLink, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Badge } from '@/components/ui/badge';
@@ -7,7 +7,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { ExplainCard } from './ExplainCard.tsx';
+import { ExplainCard, ExplainPrompt } from './ExplainCard.tsx';
 import { useCompiledMdx } from './mdx.tsx';
 import type { DocumentRecord } from './types.ts';
 
@@ -73,7 +73,10 @@ function DocumentView({ doc }: { doc: DocumentRecord }) {
 	const proseRef = useRef<HTMLDivElement>(null);
 
 	// A non-empty selection inside the prose: the text, the top-level block it
-	// ends in, and where to float the "Ask" button (relative to the article).
+	// ends in, and where to float the question prompt (relative to the article).
+	// Collapsing the selection does not clear it — clicking into the prompt's
+	// input collapses the selection — only Escape, submit, a click outside the
+	// prompt, or a new selection do.
 	const [pending, setPending] = useState<{
 		text: string;
 		block: HTMLElement;
@@ -85,7 +88,7 @@ function DocumentView({ doc }: { doc: DocumentRecord }) {
 	// the selection ended in. The MDX tree is React-owned, so we never mutate
 	// it; the host lives beside a block, not inside one.
 	const [cards, setCards] = useState<
-		{ id: string; selection: string; context: string; host: HTMLDivElement }[]
+		{ id: string; selection: string; context: string; question: string; host: HTMLDivElement }[]
 	>([]);
 
 	useEffect(() => {
@@ -93,27 +96,35 @@ function DocumentView({ doc }: { doc: DocumentRecord }) {
 			const selection = window.getSelection();
 			const prose = proseRef.current;
 			const article = articleRef.current;
-			if (!selection || !prose || !article || selection.isCollapsed) return setPending(null);
+			if (!selection || !prose || !article || selection.isCollapsed) return;
 			const range = selection.getRangeAt(0);
-			if (!prose.contains(range.commonAncestorContainer)) return setPending(null);
+			if (!prose.contains(range.commonAncestorContainer)) return;
 			const text = selection.toString().trim();
-			if (!text) return setPending(null);
 			const block = topLevelBlock(range.endContainer, prose);
-			if (!block) return setPending(null);
+			if (!text || !block) return;
 			const rect = range.getBoundingClientRect();
 			const articleRect = article.getBoundingClientRect();
 			setPending({
 				text,
 				block,
 				top: rect.bottom - articleRect.top + 6,
-				left: Math.max(0, rect.left - articleRect.left),
+				// Keep the 320px prompt inside the article's right edge.
+				left: Math.max(0, Math.min(rect.left - articleRect.left, article.clientWidth - 340)),
 			});
 		}
+		function onMouseDown(event: MouseEvent) {
+			if (event.target instanceof Element && event.target.closest('[data-explain-prompt]')) return;
+			setPending(null);
+		}
 		document.addEventListener('selectionchange', onSelectionChange);
-		return () => document.removeEventListener('selectionchange', onSelectionChange);
+		document.addEventListener('mousedown', onMouseDown);
+		return () => {
+			document.removeEventListener('selectionchange', onSelectionChange);
+			document.removeEventListener('mousedown', onMouseDown);
+		};
 	}, []);
 
-	function askAboutSelection() {
+	function askAboutSelection(question: string) {
 		if (!pending) return;
 		const host = document.createElement('div');
 		// Not `.after()`: workers-types' HTMLRewriter `Element` shadows the DOM signature.
@@ -124,6 +135,7 @@ function DocumentView({ doc }: { doc: DocumentRecord }) {
 				id: crypto.randomUUID(),
 				selection: pending.text,
 				context: pending.block.textContent?.trim() ?? '',
+				question,
 				host,
 			},
 		]);
@@ -163,19 +175,14 @@ function DocumentView({ doc }: { doc: DocumentRecord }) {
 				</div>
 			)}
 			{pending && (
-				<Button
-					size="sm"
-					className="absolute z-10 shadow-md"
-					style={{ top: pending.top, left: pending.left }}
-					// mousedown, not click: a click would first collapse the selection.
-					onMouseDown={(event) => {
-						event.preventDefault();
-						askAboutSelection();
-					}}
-				>
-					<MessageCircleQuestion data-icon="inline-start" />
-					Ask about this
-				</Button>
+				<div className="absolute z-10" style={{ top: pending.top, left: pending.left }}>
+					<ExplainPrompt
+						key={pending.text}
+						selection={pending.text}
+						onSubmit={askAboutSelection}
+						onCancel={() => setPending(null)}
+					/>
+				</div>
 			)}
 			{cards.map((card) =>
 				createPortal(
@@ -184,6 +191,7 @@ function DocumentView({ doc }: { doc: DocumentRecord }) {
 						doc={doc}
 						selection={card.selection}
 						context={card.context}
+						question={card.question}
 						onDismiss={() => {
 							card.host.remove();
 							setCards((all) => all.filter((c) => c.id !== card.id));
