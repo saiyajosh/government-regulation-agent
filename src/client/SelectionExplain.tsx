@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { ExplainInput } from '../lib/explain.ts';
 import { ExplainCard, ExplainPrompt } from './ExplainCard.tsx';
@@ -12,14 +12,11 @@ import type { DocumentRecord } from './types.ts';
 // portaled into a host <div> inserted directly after the block the selection
 // ended in, so the React-owned document/chat trees are never mutated.
 export function SelectionExplain({ openDocs }: { openDocs: DocumentRecord[] }) {
-	const [pending, setPending] = useState<{
-		text: string;
-		block: HTMLElement;
-		region: HTMLElement;
-		top: number;
-		left: number;
-		prompt: boolean;
-	} | null>(null);
+	const [pending, setPending] = useState<Pending | null>(null);
+	// Mirror for the native listeners, which must read the latest value without
+	// smuggling side effects into a state updater.
+	const pendingRef = useRef<Pending | null>(null);
+	pendingRef.current = pending;
 	const [cards, setCards] = useState<
 		{ id: string; input: ExplainInput; question: string; host: HTMLDivElement }[]
 	>([]);
@@ -44,7 +41,8 @@ export function SelectionExplain({ openDocs }: { openDocs: DocumentRecord[] }) {
 				text,
 				block,
 				region,
-				top: rect.bottom + 6,
+				rectTop: rect.top,
+				rectBottom: rect.bottom,
 				left: Math.max(8, Math.min(rect.left, window.innerWidth - 340)),
 			};
 		}
@@ -78,24 +76,23 @@ export function SelectionExplain({ openDocs }: { openDocs: DocumentRecord[] }) {
 			// ⌘/ on Mac, Ctrl+/ elsewhere. `code` covers layouts where `/` needs a modifier.
 			if (!(event.metaKey || event.ctrlKey) || event.shiftKey || event.altKey) return;
 			if (event.key !== '/' && event.code !== 'Slash') return;
-			const next = readSelection();
-			setPending((current) => {
-				const base = next ?? current;
-				if (!base) return null;
-				event.preventDefault();
-				return { ...base, prompt: true };
-			});
+			const base = readSelection() ?? pendingRef.current;
+			if (!base) return;
+			event.preventDefault();
+			event.stopPropagation();
+			setPending({ ...base, prompt: true });
 		}
 
 		document.addEventListener('selectionchange', onSelectionChange);
 		document.addEventListener('mousedown', onMouseDown);
 		document.addEventListener('mouseup', onMouseUp);
-		document.addEventListener('keydown', onKeyDown);
+		// Capture phase on window so no focused control can swallow the shortcut.
+		window.addEventListener('keydown', onKeyDown, true);
 		return () => {
 			document.removeEventListener('selectionchange', onSelectionChange);
 			document.removeEventListener('mousedown', onMouseDown);
 			document.removeEventListener('mouseup', onMouseUp);
-			document.removeEventListener('keydown', onKeyDown);
+			window.removeEventListener('keydown', onKeyDown, true);
 		};
 	}, []);
 
@@ -111,14 +108,18 @@ export function SelectionExplain({ openDocs }: { openDocs: DocumentRecord[] }) {
 		setPending(null);
 	}
 
+	// Sit below the selection, or above it when the prompt would run off the
+	// bottom of the viewport (replies in the chat usually end right there).
+	const placement = pending
+		? pending.rectBottom + (pending.prompt ? PROMPT_HEIGHT : HINT_HEIGHT) < window.innerHeight
+			? { top: pending.rectBottom + 6 }
+			: { bottom: window.innerHeight - pending.rectTop + 6 }
+		: null;
+
 	return (
 		<>
-			{pending && (
-				<div
-					data-explain-ui
-					className="fixed z-50"
-					style={{ top: pending.top, left: pending.left }}
-				>
+			{pending && placement && (
+				<div data-explain-ui className="fixed z-50" style={{ ...placement, left: pending.left }}>
 					{pending.prompt ? (
 						<ExplainPrompt
 							key={pending.text}
@@ -149,6 +150,20 @@ export function SelectionExplain({ openDocs }: { openDocs: DocumentRecord[] }) {
 		</>
 	);
 }
+
+type Pending = {
+	text: string;
+	block: HTMLElement;
+	region: HTMLElement;
+	rectTop: number;
+	rectBottom: number;
+	left: number;
+	prompt: boolean;
+};
+
+// Approximate rendered heights, for choosing above vs. below the selection.
+const HINT_HEIGHT = 40;
+const PROMPT_HEIGHT = 110;
 
 const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
 
