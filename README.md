@@ -2,8 +2,9 @@
 
 Explore and understand U.S. federal, state, county, and municipal laws and
 regulations: a chat interface backed by a [Flue](https://flueframework.com)
-agent, alongside a tabbed "Resources" view rendering the sourced Markdown/MDX
-documents the agent grounds its answers in. Documents are stored in a
+agent. When the agent opens a law it cites, a tabbed "Resources" panel slides
+in beside the chat and renders the sourced Markdown/MDX document; otherwise the
+chat fills the window. Documents are stored in a
 Cloudflare R2 bucket; the app runs on Cloudflare Workers via Vite, Hono, and
 React.
 
@@ -36,9 +37,11 @@ and the token is a secret: `wrangler secret put CLOUDFLARE_API_KEY`.
 pnpm run dev
 ```
 
-Opens the chat + Resources UI at `http://localhost:5173`. See `src/app.ts`
-for the route map (`/agents/regulation-agent/:id` for chat, `/api/documents`
-for the document library).
+Opens the chat UI at `http://localhost:5173`. See `src/app.ts` for the route
+map (`/agents/regulation-agent/:id` for chat, `/api/documents/:key` to read
+one document). There is no list endpoint on purpose: the library will hold
+too many laws to enumerate, so documents surface only when the agent opens
+them.
 
 ## Seed the document library
 
