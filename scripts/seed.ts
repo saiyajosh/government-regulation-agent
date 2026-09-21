@@ -1,19 +1,30 @@
 // Seed the R2 document library from official, public-domain sources.
 //
-//   node scripts/seed.ts                 # fetch into ./seed/documents, no upload
-//   node scripts/seed.ts --upload        # also upload via the running app (see below)
-//   node scripts/seed.ts --only ecfr,ca  # subset of sources (see SOURCES)
-//   node scripts/seed.ts --limit 20      # cap documents per source (default 40)
+//   node scripts/seed.ts                       # sample: ~40 docs per source, no upload
+//   node scripts/seed.ts --upload              # also upload through the running app
+//   node scripts/seed.ts --only ecfr,ca        # subset of sources (see SOURCES)
+//   node scripts/seed.ts --limit 0             # no per-source cap (0 = unlimited)
+//   node scripts/seed.ts --full --limit 0 --upload --skip-existing
+//
+// Sample mode (default) pulls a few well-known parts, chapters, and codes.
+// --full walks whole titles and codes instead:
+//   --cfr-titles 1,5        every section of those CFR titles (eCFR)
+//   --usc-titles 5          every section of those U.S. Code titles (USLM XML)
+//   --fr-since 2026-01-01   every final rule published since that date
+//   --ca-codes GOV,CIV      every section of those California codes (all = all 30)
+//   --municode-state CA     every city on Municode in that state (counties too
+//                           with --municode-counties)
 //
 // Every document is one citable unit (a statute section, a CFR section, a
-// Federal Register rule, a code section) written as Markdown with frontmatter
-// and uploaded with matching x-amz-meta-* headers so AI Search can filter on
-// them. Uploads go through the app's PUT /api/documents/:key route (Wrangler
-// cannot set R2 custom metadata), so run `pnpm dev` first and set SEED_TOKEN
-// in .env; SEED_URL overrides the default http://localhost:5173. Afterwards,
-// trigger an index sync:
+// Federal Register rule, a code section) written as Markdown with frontmatter.
+// Uploads go through the app's PUT /api/documents/:key route (Wrangler cannot
+// set the R2 custom metadata AI Search filters on), so run `pnpm dev` first
+// and set SEED_TOKEN in .env; SEED_URL overrides http://localhost:5173.
+// --skip-existing makes re-runs resumable. Afterwards, trigger an index sync:
 //   npx wrangler ai-search jobs create government-regulation-agent
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
+import { mkdir, mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 const SEED_URL = process.env.SEED_URL ?? 'http://localhost:5173';
@@ -24,15 +35,25 @@ const flag = (name: string) => {
 	return index === -1 ? undefined : (args[index + 1] ?? '');
 };
 const UPLOAD = args.includes('--upload');
-const LIMIT = Number(flag('limit') ?? 40);
+const FULL = args.includes('--full');
+const SKIP_EXISTING = args.includes('--skip-existing');
+const LIMIT = Number(flag('limit') ?? (FULL ? 0 : 40)) || Infinity;
+const CONCURRENCY = Number(flag('concurrency') ?? 6);
 const ONLY = flag('only')?.split(',').filter(Boolean);
-const SEED_TOKEN = process.env.SEED_TOKEN ?? (await readEnvToken());
-if (UPLOAD && !SEED_TOKEN) throw new Error('--upload needs SEED_TOKEN in the environment or .env');
-let cachedEcfrDate: string | undefined;
+const CFR_TITLES = (flag('cfr-titles') ?? '5').split(',').map(Number);
+const USC_TITLES = (flag('usc-titles') ?? '5').split(',');
+const FR_SINCE = flag('fr-since');
+const CA_CODES = (flag('ca-codes') ?? 'GOV').split(',');
+const MUNICODE_STATE = flag('municode-state') ?? 'CA';
+const MUNICODE_COUNTIES = args.includes('--municode-counties');
+// Declared before any top-level await so the helpers below can see them.
 const HEADERS = {
 	'User-Agent': 'government-regulation-agent-seed/1.0',
 	Accept: 'application/json, text/xml, text/html, */*',
 };
+let cachedEcfrDate: string | undefined;
+const SEED_TOKEN = process.env.SEED_TOKEN ?? (await readEnvToken());
+if (UPLOAD && !SEED_TOKEN) throw new Error('--upload needs SEED_TOKEN in the environment or .env');
 
 interface Doc {
 	// R2 key, e.g. federal/cfr/5-cfr-1201.3.md
@@ -49,255 +70,279 @@ interface Doc {
 	body: string;
 }
 
+// Each source pushes documents as it finds them so uploads overlap with
+// fetching and a crash keeps what was already stored.
+type Emit = (doc: Doc) => Promise<void>;
+
 // ---------------------------------------------------------------------------
 // Sources
 // ---------------------------------------------------------------------------
 
-const SOURCES: Record<string, () => Promise<Doc[]>> = {
-	// Code of Federal Regulations via the eCFR versioner API. Section-level XML,
-	// hierarchy metadata carries the citation, and the chapter label names the
-	// issuing agency.
-	async ecfr() {
-		const PARTS = [
+const SOURCES: Record<string, (emit: Emit) => Promise<void>> = {
+	// Code of Federal Regulations via the eCFR versioner API. One request per
+	// part returns every section as a DIV8 element; the hierarchy names the
+	// issuing agency (chapter) and the citation.
+	async ecfr(emit) {
+		const SAMPLE_PARTS = [
 			{ title: 5, part: '2635' }, // OGE Standards of Ethical Conduct
 			{ title: 5, part: '1201' }, // MSPB Practices and Procedures
 			{ title: 1, part: '51' }, // Incorporation by reference (OFR)
 		];
-		const docs: Doc[] = [];
-		for (const { title, part } of PARTS) {
+		const date = await ecfrDate();
+		const titles = FULL ? CFR_TITLES : [...new Set(SAMPLE_PARTS.map((p) => p.title))];
+		let count = 0;
+		for (const title of titles) {
 			const structure = await json<EcfrNode>(
 				`https://www.ecfr.gov/api/versioner/v1/structure/current/title-${title}.json`,
 			);
-			const chapter = findPath(structure, (n) => n.type === 'part' && n.identifier === part);
-			if (!chapter) continue;
-			const agency = chapter.path.find((n) => n.type === 'chapter')?.label_description ?? '';
-			const sections = collect(chapter.node, (n) => n.type === 'section' && !n.reserved).slice(
-				0,
-				Math.ceil(LIMIT / PARTS.length),
+			const parts = collectWithPath(structure, (n) => n.type === 'part' && !n.reserved).filter(
+				({ node }) => FULL || SAMPLE_PARTS.some((p) => p.title === title && p.part === node.identifier),
 			);
-			for (const section of sections) {
+			for (const { node: part, path: ancestors } of parts) {
+				if (count >= LIMIT) return;
+				const agency = ancestors.find((n) => n.type === 'chapter')?.label_description ?? '';
 				const xml = await text(
-					`https://www.ecfr.gov/api/versioner/v1/full/${await ecfrDate()}/title-${title}.xml?part=${part}&section=${section.identifier}`,
-				);
-				docs.push({
-					key: `federal/cfr/${title}-cfr-${section.identifier}.md`,
-					title: `${title} CFR ${section.identifier} — ${section.label_description}`,
-					jurisdiction: 'Federal',
-					level: 'federal',
-					citation: `${title} CFR § ${section.identifier}`,
-					sourceUrl: `https://www.ecfr.gov/current/title-${title}/section-${section.identifier}`,
-					authors: '',
-					issuingBody: agency,
-					body: htmlToMarkdown(xml.replace(/<HEAD>/g, '<h2>').replace(/<\/HEAD>/g, '</h2>')),
-				});
-			}
-		}
-		return docs;
-	},
-
-	// United States Code via GovInfo's per-section HTML (2024 edition). Title 5
-	// chapter 5 subchapter II is the Administrative Procedure Act.
-	async uscode() {
-		const SECTIONS = ['551', '552', '552a', '552b', '553', '554', '555', '556', '557', '558', '559'];
-		const docs: Doc[] = [];
-		for (const section of SECTIONS.slice(0, LIMIT)) {
-			const url = `https://www.govinfo.gov/content/pkg/USCODE-2024-title5/html/USCODE-2024-title5-partI-chap5-subchapII-sec${section}.htm`;
-			const html = await text(url);
-			const heading = /<h3 class="section-head">(.*?)<\/h3>/s.exec(html)?.[1] ?? `§${section}`;
-			const bodyHtml = html.slice(html.indexOf('<h3 class="section-head">'));
-			docs.push({
-				key: `federal/usc/5-usc-${section}.md`,
-				title: `5 U.S.C. ${htmlToMarkdown(heading).trim()}`,
-				jurisdiction: 'Federal',
-				level: 'federal',
-				citation: `5 U.S.C. § ${section}`,
-				sourceUrl: url,
-				authors: '',
-				issuingBody: 'United States Congress',
-				body: htmlToMarkdown(bodyHtml.replace(/<h3 class="section-head">/, '<h2>').replace(/<\/h3>/, '</h2>')),
-			});
-		}
-		return docs;
-	},
-
-	// Final rules from the Federal Register API (most recent first) with the
-	// GPO plain-text body. Agencies become the issuing body.
-	async federalRegister() {
-		const fields = [
-			'title',
-			'document_number',
-			'citation',
-			'publication_date',
-			'effective_on',
-			'agency_names',
-			'cfr_references',
-			'abstract',
-			'html_url',
-			'raw_text_url',
-		];
-		const url = new URL('https://www.federalregister.gov/api/v1/documents.json');
-		url.searchParams.set('per_page', String(Math.min(LIMIT, 100)));
-		url.searchParams.append('conditions[type][]', 'RULE');
-		url.searchParams.set('order', 'newest');
-		for (const field of fields) url.searchParams.append('fields[]', field);
-		const page = await json<{ results: FrDoc[] }>(url.toString());
-		const docs: Doc[] = [];
-		for (const rule of page.results) {
-			const raw = await text(rule.raw_text_url);
-			const pre = /<pre>([\s\S]*?)<\/pre>/.exec(raw)?.[1] ?? raw;
-			const cfr = (rule.cfr_references ?? [])
-				.map((r) => `${r.title} CFR ${r.part ?? ''}`.trim())
-				.join(', ');
-			docs.push({
-				key: `federal/fr/${rule.document_number}.md`,
-				title: rule.title,
-				jurisdiction: 'Federal',
-				level: 'federal',
-				citation: rule.citation ?? `FR Doc. ${rule.document_number}`,
-				sourceUrl: rule.html_url,
-				authors: '',
-				issuingBody: (rule.agency_names ?? []).join('; '),
-				body: [
-					`# ${rule.title}`,
-					'',
-					`**Published:** ${rule.publication_date}` +
-						(rule.effective_on ? `  **Effective:** ${rule.effective_on}` : '') +
-						(cfr ? `  **Amends:** ${cfr}` : ''),
-					'',
-					rule.abstract ? `> ${rule.abstract}\n` : '',
-					'```text',
-					decodeEntities(pre.replace(/<[^>]+>/g, '')).trim(),
-					'```',
-				].join('\n'),
-			});
-		}
-		return docs;
-	},
-
-	// California statutes from the Legislature's leginfo site. Government Code
-	// title 2, division 3, part 1, chapter 3.5 is the California APA.
-	async ca() {
-		const CODE = 'GOV';
-		const base = 'https://leginfo.legislature.ca.gov/faces';
-		const numbers = new Set<string>();
-		for (const article of ['1.', '2.', '3.', '4.', '5.', '6.', '7.', '8.']) {
-			const listing = await text(
-				`${base}/codes_displayText.xhtml?lawCode=${CODE}&division=3.&title=2.&part=1.&chapter=3.5.&article=${article}`,
-			);
-			for (const match of listing.matchAll(/submitCodesValues\('([\d.]+)'/g)) numbers.add(match[1]);
-		}
-		const docs: Doc[] = [];
-		for (const number of [...numbers].slice(0, LIMIT)) {
-			const url = `${base}/codes_displaySection.xhtml?lawCode=${CODE}&sectionNum=${number}`;
-			const html = await text(url);
-			const section = /<div id="codeLawSectionNoHead"[^>]*>([\s\S]*?)<\/div>\s*<\/div>/.exec(html)?.[1];
-			if (!section) continue;
-			// The section div leads with the code hierarchy as a run of headings
-			// (each followed by an enactment note), then the numbered section.
-			const lines = htmlToMarkdown(section).split('\n');
-			const start = lines.findIndex((line) => line.startsWith(`### ${number}`));
-			const heading = lines
-				.slice(0, Math.max(start, 0))
-				.filter((line) => /^### (TITLE|DIVISION|PART|CHAPTER|ARTICLE)\b/.test(line))
-				.map((line) => line.slice(4).replace(/\s*\[[\d.\s-]+\]$/, ''))
-				.join(' › ');
-			const num = number.replace(/\.$/, '');
-			docs.push({
-				key: `california/gov/gov-${num}.md`,
-				title: `Cal. Gov. Code § ${num}`,
-				jurisdiction: 'California',
-				level: 'state',
-				citation: `Cal. Gov. Code § ${num}`,
-				sourceUrl: url,
-				authors: '',
-				issuingBody: 'California State Legislature',
-				body: [
-					`# Government Code § ${num}`,
-					'',
-					heading ? `*${heading}*\n` : '',
-					lines.slice(start + 1).join('\n'),
-				].join('\n'),
-			});
-		}
-		return docs;
-	},
-
-	// County and municipal codes hosted on Municode (undocumented JSON API used
-	// by library.municode.com). One county and one city; each walks the first
-	// articles/chapters of the code down to section-level documents.
-	async municode() {
-		const CODES = [
-			{
-				clientId: 11719,
-				jurisdiction: 'Miami-Dade County, Florida',
-				level: 'county',
-				issuingBody: 'Miami-Dade County Board of County Commissioners',
-				cite: 'Miami-Dade County Code',
-				slug: 'miami-dade-county-fl',
-			},
-			{
-				clientId: 3637,
-				jurisdiction: 'Oakland, California',
-				level: 'municipal',
-				issuingBody: 'Oakland City Council',
-				cite: 'Oakland Municipal Code',
-				slug: 'oakland-ca',
-			},
-		];
-		const api = 'https://api.municode.com';
-		const docs: Doc[] = [];
-		for (const code of CODES) {
-			const content = await json<{ codes: { productId: number; productName: string }[] }>(
-				`${api}/ClientContent/${code.clientId}`,
-			);
-			const product = content.codes.find((c) => /code of ordinances|municipal code|code/i.test(c.productName));
-			if (!product) continue;
-			const job = await json<{ Id: number }>(`${api}/Jobs/latest/${product.productId}`);
-			const toc = await json<{ Children: TocNode[] }>(
-				`${api}/codesToc?jobId=${job.Id}&productId=${product.productId}`,
-			);
-			// Depth-first through the TOC, collecting leaf-ish nodes whose content
-			// call returns section documents, until this code's share of LIMIT.
-			const budget = Math.ceil(LIMIT / CODES.length);
-			const queue = toc.Children.filter((n) => n.HasChildren);
-			while (queue.length && docs.filter((d) => d.jurisdiction === code.jurisdiction).length < budget) {
-				const node = queue.shift()!;
-				const children = await json<TocNode[]>(
-					`${api}/codesToc/children?jobId=${job.Id}&nodeId=${node.Id}&productId=${product.productId}`,
-				);
-				const branches = children.filter((c) => c.HasChildren);
-				if (branches.length) {
-					queue.unshift(...branches);
-					continue;
-				}
-				const page = await json<{ Docs: MunicodeDoc[] }>(
-					`${api}/CodesContent?jobId=${job.Id}&nodeId=${node.Id}&productId=${product.productId}`,
-				);
-				// Docs are in reading order with mixed depths, so the ancestry of a
-				// section is the latest title seen at each shallower depth.
-				const ancestors: string[] = [];
-				for (const section of page.Docs) {
-					ancestors.length = section.NodeDepth;
-					ancestors[section.NodeDepth - 1] = section.Title;
-					if (section.NodeDepth < 3 || section.Content.length <= 80) continue;
-					if (docs.filter((d) => d.jurisdiction === code.jurisdiction).length >= budget) break;
-					const context = ancestors.slice(0, section.NodeDepth - 1).join(' › ');
-					const number = /^(?:sec(?:tion)?\.?\s*)?([\dA-Z.-]+?)\.?\s*-\s/i.exec(section.Title)?.[1];
-					docs.push({
-						key: `${code.level}/${code.slug}/${section.Id.toLowerCase()}.md`,
-						title: `${code.cite} ${section.Title.replace(/\s*-\s*/, ' — ')}`,
-						jurisdiction: code.jurisdiction,
-						level: code.level,
-						citation: number ? `${code.cite} § ${number}` : code.cite,
-						sourceUrl: `https://library.municode.com/${code.slug.replace(/-[a-z]{2}$/, '')}/codes/code_of_ordinances?nodeId=${section.Id}`,
+					`https://www.ecfr.gov/api/versioner/v1/full/${date}/title-${title}.xml?part=${part.identifier}`,
+				).catch(() => '');
+				for (const match of xml.matchAll(/<DIV8 N="([^"]+)" TYPE="SECTION"[^>]*>([\s\S]*?)<\/DIV8>/g)) {
+					if (count >= LIMIT) return;
+					const [, identifier, inner] = match;
+					const heading = htmlToMarkdown(/<HEAD>([\s\S]*?)<\/HEAD>/.exec(inner)?.[1] ?? identifier);
+					if (/\[Reserved\]/i.test(heading)) continue;
+					count += 1;
+					await emit({
+						key: `federal/cfr/${title}-cfr-${identifier}.md`,
+						title: `${title} CFR ${identifier} — ${heading.replace(/^§\s*[\d.]+[a-z-]*\s*/i, '')}`,
+						jurisdiction: 'Federal',
+						level: 'federal',
+						citation: `${title} CFR § ${identifier}`,
+						sourceUrl: `https://www.ecfr.gov/current/title-${title}/section-${identifier}`,
 						authors: '',
-						issuingBody: code.issuingBody,
-						body: [`# ${section.Title}`, '', `*${context}*`, '', htmlToMarkdown(section.Content)].join('\n'),
+						issuingBody: agency,
+						body: htmlToMarkdown(inner.replace(/<HEAD>/g, '<h2>').replace(/<\/HEAD>/g, '</h2>')),
 					});
 				}
 			}
 		}
-		return docs;
+	},
+
+	// United States Code from the Office of the Law Revision Counsel's USLM XML
+	// release points (one zip per title). In sample mode only Title 5 chapter 5
+	// subchapter II (the Administrative Procedure Act) is kept.
+	async uscode(emit) {
+		const download = await text('https://uscode.house.gov/download/download.shtml');
+		let count = 0;
+		for (const title of USC_TITLES) {
+			const padded = title.padStart(2, '0');
+			const zipPath = new RegExp(`releasepoints/us/pl/\\d+/\\d+/xml_usc${padded}@[\\d-]+\\.zip`).exec(download)?.[0];
+			if (!zipPath) throw new Error(`No USLM release found for title ${title}`);
+			const dir = await mkdtemp(path.join(tmpdir(), 'usc-'));
+			const zip = path.join(dir, 'title.zip');
+			const archive = await request(`https://uscode.house.gov/download/${zipPath}`);
+			await writeFile(zip, Buffer.from(await archive.arrayBuffer()));
+			execFileSync('unzip', ['-o', '-q', zip, '-d', dir]);
+			const xmlFile = (await readdir(dir)).find((f) => f.endsWith('.xml'));
+			const xml = await readFile(path.join(dir, xmlFile!), 'utf8');
+			for (const match of xml.matchAll(/<section\b[^>]*identifier="\/us\/usc\/t\w+\/s([^"]+)"[^>]*>([\s\S]*?)<\/section>/g)) {
+				if (count >= LIMIT) return;
+				const [, section, inner] = match;
+				if (!FULL && !/^55[1-9]/.test(section)) continue;
+				const num = /<num[^>]*>([\s\S]*?)<\/num>/.exec(inner)?.[1] ?? `§ ${section}`;
+				const heading = /<heading[^>]*>([\s\S]*?)<\/heading>/.exec(inner)?.[1] ?? '';
+				if (/repealed|reserved|omitted/i.test(heading) && inner.length < 600) continue;
+				count += 1;
+				await emit({
+					key: `federal/usc/${title}-usc-${section}.md`,
+					title: `${title} U.S.C. ${htmlToMarkdown(num).trim()} ${htmlToMarkdown(heading).trim()}`.trim(),
+					jurisdiction: 'Federal',
+					level: 'federal',
+					citation: `${title} U.S.C. § ${section}`,
+					sourceUrl: `https://uscode.house.gov/view.xhtml?req=granuleid:USC-prelim-title${title}-section${section}&num=0&edition=prelim`,
+					authors: '',
+					issuingBody: 'United States Congress',
+					body: htmlToMarkdown(
+						inner
+							.replace(/<num[^>]*>([\s\S]*?)<\/num>\s*<heading[^>]*>([\s\S]*?)<\/heading>/, '<h2>$1 $2</h2>')
+							.replace(/<sourceCredit>/g, '<p><i>')
+							.replace(/<\/sourceCredit>/g, '</i></p>')
+							.replace(/<notes>[\s\S]*$/, ''),
+					),
+				});
+			}
+		}
+	},
+
+	// Final rules from the Federal Register API (most recent first) with the
+	// GPO plain-text body. Agencies become the issuing body.
+	async federalRegister(emit) {
+		const fields = ['title', 'document_number', 'citation', 'publication_date', 'effective_on', 'agency_names', 'cfr_references', 'abstract', 'html_url', 'raw_text_url'];
+		const first = new URL('https://www.federalregister.gov/api/v1/documents.json');
+		first.searchParams.set('per_page', '100');
+		first.searchParams.append('conditions[type][]', 'RULE');
+		first.searchParams.set('order', 'newest');
+		if (FR_SINCE) first.searchParams.set('conditions[publication_date][gte]', FR_SINCE);
+		for (const field of fields) first.searchParams.append('fields[]', field);
+		let next: string | undefined = first.toString();
+		let count = 0;
+		while (next && count < LIMIT) {
+			const page: { results: FrDoc[]; next_page_url?: string } = await json(next);
+			next = page.next_page_url;
+			for (const rule of page.results) {
+				if (count >= LIMIT) return;
+				count += 1;
+				const raw = await text(rule.raw_text_url).catch(() => '');
+				if (!raw) continue;
+				const pre = /<pre>([\s\S]*?)<\/pre>/.exec(raw)?.[1] ?? raw;
+				const cfr = (rule.cfr_references ?? []).map((r) => `${r.title} CFR ${r.part ?? ''}`.trim()).join(', ');
+				await emit({
+					key: `federal/fr/${rule.document_number}.md`,
+					title: rule.title,
+					jurisdiction: 'Federal',
+					level: 'federal',
+					citation: rule.citation ?? `FR Doc. ${rule.document_number}`,
+					sourceUrl: rule.html_url,
+					authors: '',
+					issuingBody: (rule.agency_names ?? []).join('; '),
+					body: [
+						`# ${rule.title}`,
+						'',
+						`**Published:** ${rule.publication_date}` +
+							(rule.effective_on ? `  **Effective:** ${rule.effective_on}` : '') +
+							(cfr ? `  **Amends:** ${cfr}` : ''),
+						'',
+						rule.abstract ? `> ${rule.abstract}\n` : '',
+						'```text',
+						decodeEntities(pre.replace(/<[^>]+>/g, '')).trim(),
+						'```',
+					].join('\n'),
+				});
+			}
+		}
+	},
+
+	// California statutes from the Legislature's leginfo site. The TOC is
+	// crawled through its "expanded branch" pages down to leaf branches, whose
+	// text pages carry every section of that chapter or article in one
+	// response. Sample mode covers Government Code chapter 3.5 (the CA APA).
+	async ca(emit) {
+		const base = 'https://leginfo.legislature.ca.gov/faces';
+		const codes = !FULL
+			? ['GOV']
+			: CA_CODES.includes('all')
+				? [...new Set([...(await text(`${base}/codes.xhtml`)).matchAll(/tocCode=([A-Z]+)/g)].map((m) => m[1]))]
+				: CA_CODES;
+		let count = 0;
+		const seen = new Set<string>();
+		for (const code of codes) {
+			const leaves = FULL
+				? await caLeafPages(base, code)
+				: [`${base}/codes_displayText.xhtml?lawCode=GOV&division=3.&title=2.&part=1.&chapter=3.5.`];
+			for (const leaf of leaves) {
+				if (count >= LIMIT) return;
+				const page = await text(leaf).catch(() => '');
+				const codeName = decodeEntities(new RegExp(`<b>([^<]+?) - ${code}</b>`).exec(page)?.[1] ?? code);
+				// A page holds several sections under interleaved hierarchy headings,
+				// so each section's breadcrumb is the latest heading seen per rank.
+				const [preamble, ...chunks] = page.split(`<h6 style="float:left;"><a href="javascript:submitCodesValues('`);
+				const ranks = new Map<string, string>();
+				const noteHeadings = (html: string) => {
+					for (const m of html.matchAll(/<h[1-6][^>]*>\s*<b>\s*([^<]+?)\s*<\/b>/g)) {
+						const heading = decodeEntities(m[1]).replace(/\s*\[[\d.\s-]+\]$/, '').trim();
+						const rank = /^(TITLE|DIVISION|PART|CHAPTER|ARTICLE)\b/.exec(heading)?.[1];
+						if (rank) ranks.set(rank, heading);
+					}
+				};
+				noteHeadings(preamble);
+				for (const chunk of chunks) {
+					if (count >= LIMIT) return;
+					const number = /^([\d.]+?)\.?'/.exec(chunk)?.[1];
+					const bodyHtml = chunk.slice(chunk.indexOf('</h6>') + 5).split('<div align="left">')[0];
+					const crumbs = ['TITLE', 'DIVISION', 'PART', 'CHAPTER', 'ARTICLE'].flatMap((r) => ranks.get(r) ?? []);
+					noteHeadings(chunk.slice(bodyHtml.length));
+					if (!number || seen.has(`${code}:${number}`)) continue;
+					seen.add(`${code}:${number}`);
+					count += 1;
+					await emit({
+						key: `california/${code.toLowerCase()}/${code.toLowerCase()}-${number}.md`,
+						title: `Cal. ${caShort(codeName, code)} § ${number}`,
+						jurisdiction: 'California',
+						level: 'state',
+						citation: `Cal. ${caShort(codeName, code)} § ${number}`,
+						sourceUrl: `${base}/codes_displaySection.xhtml?lawCode=${code}&sectionNum=${number}.`,
+						authors: '',
+						issuingBody: 'California State Legislature',
+						body: [`# ${codeName} § ${number}`, '', crumbs.length ? `*${crumbs.join(' › ')}*\n` : '', htmlToMarkdown(bodyHtml)].join('\n'),
+					});
+				}
+			}
+		}
+	},
+
+	// County and municipal codes hosted on Municode (the undocumented JSON API
+	// behind library.municode.com). Sample mode takes one county and one city;
+	// --full walks every city in --municode-state. Each code's TOC is walked
+	// depth-first to leaf nodes, whose content call returns section documents.
+	async municode(emit) {
+		const api = 'https://api.municode.com';
+		const clients: MunicodeClient[] = FULL
+			? (await json<MunicodeClient[]>(`${api}/Clients/stateabbr?stateAbbr=${MUNICODE_STATE}`)).filter(
+					(c) => MUNICODE_COUNTIES || !/county/i.test(c.ClientName),
+				)
+			: [
+					{ ClientID: 11719, ClientName: 'Miami-Dade County', State: { StateName: 'Florida', StateAbbreviation: 'FL' } },
+					{ ClientID: 3637, ClientName: 'Oakland', State: { StateName: 'California', StateAbbreviation: 'CA' } },
+				];
+		const perClient = Math.ceil(LIMIT / clients.length);
+		for (const client of clients) {
+			const isCounty = /county/i.test(client.ClientName);
+			const jurisdiction = `${client.ClientName}, ${client.State.StateName}`;
+			const slug = `${client.ClientName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}-${client.State.StateAbbreviation.toLowerCase()}`;
+			const cite = `${client.ClientName} ${isCounty ? 'Code' : 'Municipal Code'}`;
+			const content = await json<{ codes: { productId: number; productName: string }[] }>(`${api}/ClientContent/${client.ClientID}`).catch(() => null);
+			if (!content) continue;
+			let count = 0;
+			for (const product of content.codes) {
+				if (count >= perClient) break;
+				const job = await json<{ Id: number }>(`${api}/Jobs/latest/${product.productId}`).catch(() => null);
+				if (!job?.Id) continue;
+				const toc = await json<{ Children: TocNode[] }>(`${api}/codesToc?jobId=${job.Id}&productId=${product.productId}`).catch(() => null);
+				if (!toc) continue;
+				const queue = toc.Children.filter((n) => n.HasChildren);
+				while (queue.length && count < perClient) {
+					const node = queue.shift()!;
+					const children = await json<TocNode[]>(`${api}/codesToc/children?jobId=${job.Id}&nodeId=${node.Id}&productId=${product.productId}`).catch(() => []);
+					const branches = children.filter((c) => c.HasChildren);
+					if (branches.length) {
+						queue.unshift(...branches);
+						continue;
+					}
+					const page = await json<{ Docs: MunicodeDoc[] }>(`${api}/CodesContent?jobId=${job.Id}&nodeId=${node.Id}&productId=${product.productId}`).catch(() => null);
+					if (!page) continue;
+					// Docs are in reading order with mixed depths, so the ancestry of a
+					// section is the latest title seen at each shallower depth.
+					const ancestors: string[] = [];
+					for (const section of page.Docs) {
+						ancestors.length = section.NodeDepth;
+						ancestors[section.NodeDepth - 1] = section.Title;
+						if (section.NodeDepth < 3 || section.Content.length <= 80) continue;
+						if (count >= perClient) break;
+						count += 1;
+						const number = /^(?:sec(?:tion)?\.?\s*)?([\dA-Z.-]+?)\.?\s*-\s/i.exec(section.Title)?.[1];
+						await emit({
+							key: `${isCounty ? 'county' : 'municipal'}/${slug}/${section.Id.toLowerCase()}.md`,
+							title: `${cite} ${section.Title.replace(/\s*-\s*/, ' — ')}`,
+							jurisdiction,
+							level: isCounty ? 'county' : 'municipal',
+							citation: number ? `${cite} § ${number}` : cite,
+							sourceUrl: `https://library.municode.com/${client.State.StateAbbreviation.toLowerCase()}/${slug.replace(/-[a-z]{2}$/, '')}/codes/code_of_ordinances?nodeId=${section.Id}`,
+							authors: '',
+							issuingBody: isCounty ? `${client.ClientName} Board of Supervisors` : `${client.ClientName} City Council`,
+							body: [`# ${section.Title}`, '', `*${[product.productName, ...ancestors.slice(0, section.NodeDepth - 1)].join(' › ')}*`, '', htmlToMarkdown(section.Content)].join('\n'),
+						});
+					}
+				}
+			}
+		}
 	},
 };
 
@@ -306,25 +351,47 @@ const SOURCES: Record<string, () => Promise<Doc[]>> = {
 // ---------------------------------------------------------------------------
 
 const selected = Object.entries(SOURCES).filter(([name]) => !ONLY || ONLY.includes(name));
-for (const [name, fetchDocs] of selected) {
-	process.stdout.write(`[${name}] fetching…`);
-	const docs = await fetchDocs();
-	console.log(` ${docs.length} documents`);
-	for (const doc of docs) {
-		const file = path.join(OUT_DIR, doc.key);
-		await mkdir(path.dirname(file), { recursive: true });
-		await writeFile(file, render(doc));
-		if (!UPLOAD) continue;
-		const response = await fetch(`${SEED_URL}/api/documents/${doc.key}`, {
-			method: 'PUT',
-			headers: { authorization: `Bearer ${SEED_TOKEN}`, 'content-type': 'text/markdown' },
-			body: render(doc),
-		});
-		if (!response.ok) throw new Error(`upload failed ${response.status} ${doc.key}: ${await response.text()}`);
-		console.log(`  ↑ ${doc.key}`);
-	}
+const totals: Record<string, { written: number; uploaded: number; skipped: number; failed: number }> = {};
+for (const [name, run] of selected) {
+	const stats = { written: 0, uploaded: 0, skipped: 0, failed: 0 };
+	totals[name] = stats;
+	console.log(`[${name}] starting`);
+	const inFlight = new Set<Promise<void>>();
+	const emit: Emit = async (doc) => {
+		const task = (async () => {
+			const file = path.join(OUT_DIR, doc.key);
+			await mkdir(path.dirname(file), { recursive: true });
+			await writeFile(file, render(doc));
+			stats.written += 1;
+			if (!UPLOAD) return;
+			if (SKIP_EXISTING && (await fetch(`${SEED_URL}/api/documents/${doc.key}`, { method: 'HEAD' })).ok) {
+				stats.skipped += 1;
+				return;
+			}
+			const response = await fetch(`${SEED_URL}/api/documents/${doc.key}`, {
+				method: 'PUT',
+				headers: { authorization: `Bearer ${SEED_TOKEN}`, 'content-type': 'text/markdown' },
+				body: render(doc),
+			});
+			if (!response.ok) {
+				stats.failed += 1;
+				console.error(`  ✗ ${doc.key}: ${response.status} ${await response.text()}`);
+				return;
+			}
+			stats.uploaded += 1;
+			if (stats.uploaded % 100 === 0) console.log(`  [${name}] ${stats.uploaded} uploaded`);
+		})();
+		inFlight.add(task);
+		task.finally(() => inFlight.delete(task));
+		// Back-pressure: hold the source until a slot frees up.
+		if (inFlight.size >= CONCURRENCY) await Promise.race(inFlight);
+	};
+	await run(emit).catch((error: unknown) => console.error(`[${name}] aborted: ${error instanceof Error ? error.message : error}`));
+	await Promise.all(inFlight);
+	console.log(`[${name}] done`, stats);
 }
-console.log(UPLOAD ? '\nDone. Now run: npx wrangler ai-search jobs create government-regulation-agent' : `\nWrote files to ${OUT_DIR}. Re-run with --upload to push them to R2.`);
+console.table(totals);
+console.log(UPLOAD ? '\nNow run: npx wrangler ai-search jobs create government-regulation-agent' : `\nWrote files to ${OUT_DIR}. Re-run with --upload to push them.`);
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -353,26 +420,58 @@ async function readEnvToken() {
 	return /^SEED_TOKEN=["']?([^"'\n]+)/m.exec(env)?.[1];
 }
 
+// Crawl a California code's TOC to the leaf branches and return their text
+// page URLs. Branch pages link deeper branches; leaves link a text page.
+async function caLeafPages(base: string, code: string) {
+	const leaves = new Set<string>();
+	const seenBranches = new Set<string>();
+	const queue = [`${base}/codesTOCSelected.xhtml?tocCode=${code}`];
+	while (queue.length) {
+		const url = queue.shift()!;
+		if (seenBranches.has(url)) continue;
+		seenBranches.add(url);
+		const page = await text(url).catch(() => '');
+		for (const m of page.matchAll(/codes_displayexpandedbranch\.xhtml\?[^"']+/g)) {
+			const next = `${base}/${decodeEntities(m[0])}`;
+			if (!seenBranches.has(next)) queue.push(next);
+		}
+		for (const m of page.matchAll(/codes_displayText\.xhtml\?[^"']+/g)) leaves.add(`${base}/${decodeEntities(m[0])}`);
+	}
+	return [...leaves];
+}
+
+function caShort(codeName: string, code: string) {
+	const known: Record<string, string> = { GOV: 'Gov. Code', CIV: 'Civ. Code', PEN: 'Penal Code', BPC: 'Bus. & Prof. Code', CCP: 'Civ. Proc. Code', VEH: 'Veh. Code', HSC: 'Health & Safety Code', LAB: 'Lab. Code', EDC: 'Educ. Code', PRC: 'Pub. Res. Code', WIC: 'Welf. & Inst. Code', RTC: 'Rev. & Tax. Code', PUC: 'Pub. Util. Code', FAM: 'Fam. Code', CORP: 'Corp. Code', ELEC: 'Elec. Code', EVID: 'Evid. Code', FIN: 'Fin. Code', INS: 'Ins. Code', PCC: 'Pub. Cont. Code', UIC: 'Unemp. Ins. Code', WAT: 'Water Code', FGC: 'Fish & Game Code', FAC: 'Food & Agric. Code', HNC: 'Harb. & Nav. Code', MVC: 'Mil. & Vet. Code', PROB: 'Prob. Code', SHC: 'Sts. & Hy. Code', CONS: 'Const.' };
+	return known[code] ?? `${codeName.replace(/ Code$/, '')} Code`;
+}
+
 async function ecfrDate() {
 	if (cachedEcfrDate) return cachedEcfrDate;
-	const titles = await json<{ titles: { number: number; up_to_date_as_of: string }[] }>(
-		'https://www.ecfr.gov/api/versioner/v1/titles.json',
-	);
+	const titles = await json<{ titles: { number: number; up_to_date_as_of: string }[] }>('https://www.ecfr.gov/api/versioner/v1/titles.json');
 	cachedEcfrDate = titles.titles.reduce((min, t) => (t.up_to_date_as_of < min ? t.up_to_date_as_of : min), '9999');
 	return cachedEcfrDate;
 }
 
+// Retry transient failures with backoff; the sources rate-limit bursts.
+async function request(url: string, attempt = 0): Promise<Response> {
+	const response = await fetch(url, { headers: HEADERS }).catch((error: unknown) => {
+		if (attempt >= 4) throw error;
+		return null;
+	});
+	if (response?.ok) return response;
+	if (attempt >= 4 || (response && response.status < 500 && response.status !== 429)) {
+		throw new Error(`${response?.status ?? 'network'} ${url}`);
+	}
+	await new Promise((resolve) => setTimeout(resolve, 500 * 2 ** attempt));
+	return request(url, attempt + 1);
+}
 
 async function text(url: string) {
-	const response = await fetch(url, { headers: HEADERS });
-	if (!response.ok) throw new Error(`${response.status} ${url}`);
-	return response.text();
+	return (await request(url)).text();
 }
 
 async function json<T>(url: string): Promise<T> {
-	const response = await fetch(url, { headers: HEADERS });
-	if (!response.ok) throw new Error(`${response.status} ${url}`);
-	return response.json() as Promise<T>;
+	return (await request(url)).json() as Promise<T>;
 }
 
 // Small, dependency-free HTML/XML to Markdown: block tags become paragraphs
@@ -392,7 +491,7 @@ function htmlToMarkdown(html: string) {
 		.replace(/<(?:b|strong)\b[^>]*>/gi, '**')
 		.replace(/<\/(?:b|strong)>/gi, '**')
 		.replace(/<li[^>]*>/gi, '\n- ')
-		.replace(/<\/?(?:p|div|tr|ul|ol|table|blockquote|section|extract|fp|note|cita|xref)\b[^>]*>/gi, '\n\n')
+		.replace(/<\/?(?:p|div|tr|ul|ol|table|blockquote|section|extract|fp|note|cita|xref|subsection|paragraph|subparagraph|clause|chapeau|continuation|content)\b[^>]*>/gi, '\n\n')
 		.replace(/<\/?t[dh]\b[^>]*>/gi, ' ')
 		.replace(/<[^>]+>/g, '');
 	return decodeEntities(out)
@@ -404,22 +503,7 @@ function htmlToMarkdown(html: string) {
 }
 
 function decodeEntities(value: string) {
-	const named: Record<string, string> = {
-		amp: '&',
-		lt: '<',
-		gt: '>',
-		quot: '"',
-		apos: "'",
-		nbsp: ' ',
-		sect: '§',
-		mdash: '—',
-		ndash: '–',
-		para: '¶',
-		ldquo: '“',
-		rdquo: '”',
-		lsquo: '‘',
-		rsquo: '’',
-	};
+	const named: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ', sect: '§', mdash: '—', ndash: '–', para: '¶', ldquo: '“', rdquo: '”', lsquo: '‘', rsquo: '’' };
 	return value
 		.replace(/&#x([0-9a-f]+);/gi, (_, hex) => String.fromCodePoint(parseInt(hex, 16)))
 		.replace(/&#(\d+);/g, (_, dec) => String.fromCodePoint(Number(dec)))
@@ -435,21 +519,11 @@ interface EcfrNode {
 	children?: EcfrNode[];
 }
 
-function findPath(
-	node: EcfrNode,
-	predicate: (n: EcfrNode) => boolean,
-	path: EcfrNode[] = [],
-): { node: EcfrNode; path: EcfrNode[] } | undefined {
-	if (predicate(node)) return { node, path };
-	for (const child of node.children ?? []) {
-		const found = findPath(child, predicate, [...path, node]);
-		if (found) return found;
-	}
-	return undefined;
-}
-
-function collect(node: EcfrNode, predicate: (n: EcfrNode) => boolean): EcfrNode[] {
-	return [...(predicate(node) ? [node] : []), ...(node.children ?? []).flatMap((c) => collect(c, predicate))];
+function collectWithPath(node: EcfrNode, predicate: (n: EcfrNode) => boolean, path: EcfrNode[] = []): { node: EcfrNode; path: EcfrNode[] }[] {
+	return [
+		...(predicate(node) ? [{ node, path }] : []),
+		...(node.children ?? []).flatMap((c) => collectWithPath(c, predicate, [...path, node])),
+	];
 }
 
 interface FrDoc {
@@ -463,6 +537,12 @@ interface FrDoc {
 	abstract?: string;
 	html_url: string;
 	raw_text_url: string;
+}
+
+interface MunicodeClient {
+	ClientID: number;
+	ClientName: string;
+	State: { StateName: string; StateAbbreviation: string };
 }
 
 interface TocNode {
