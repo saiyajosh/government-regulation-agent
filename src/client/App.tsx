@@ -1,5 +1,6 @@
 import { useFlueAgent } from '@flue/react';
 import { useEffect, useMemo, useState } from 'react';
+import { Landmark } from 'lucide-react';
 import { ChatPanel } from './ChatPanel.tsx';
 import { ResourcesPanel } from './ResourcesPanel.tsx';
 import type { DocumentRecord } from './types.ts';
@@ -18,16 +19,12 @@ function getConversationId() {
 	}
 }
 
-interface OpenDocumentData {
-	key: string;
-	title: string;
-}
-
 export function App() {
 	const conversationId = useMemo(getConversationId, []);
 	const agent = useFlueAgent({ url: `/agents/regulation-agent/${conversationId}` });
 
 	const [openDocs, setOpenDocs] = useState<DocumentRecord[]>([]);
+	// `null` means the Library tab is active.
 	const [activeKey, setActiveKey] = useState<string | null>(null);
 
 	const openByKey = useMemo(() => {
@@ -48,9 +45,7 @@ export function App() {
 			for (const part of message.parts) {
 				if (part.type !== 'dynamic-tool') continue;
 				if (part.toolName !== 'open_law' || part.state !== 'output-available') continue;
-				const output = part.output as
-					| (OpenDocumentData & { jurisdiction: string; citation: string; sourceUrl: string; body: string })
-					| { error: string };
+				const output = part.output as DocumentRecord | { error: string };
 				if ('error' in output) continue;
 				setOpenDocs((docs) => (docs.some((d) => d.key === output.key) ? docs : [...docs, output]));
 				setActiveKey(output.key);
@@ -59,21 +54,29 @@ export function App() {
 	}, [agent.messages]);
 
 	return (
-		<main className="layout">
-			<ChatPanel agent={agent} />
-			<ResourcesPanel
-				openDocs={openDocs}
-				activeKey={activeKey}
-				onSelect={setActiveKey}
-				onOpen={openByKey}
-				onClose={(key) =>
-					setOpenDocs((docs) => {
-						const next = docs.filter((doc) => doc.key !== key);
-						if (activeKey === key) setActiveKey(next.at(-1)?.key ?? null);
-						return next;
-					})
-				}
-			/>
-		</main>
+		<div className="flex h-dvh flex-col bg-background text-foreground">
+			<header className="flex h-12 shrink-0 items-center gap-2 border-b px-4">
+				<Landmark className="size-4 text-muted-foreground" />
+				<h1 className="font-heading text-sm font-semibold tracking-tight">
+					Government Regulation Agent
+				</h1>
+			</header>
+			<main className="grid min-h-0 flex-1 grid-cols-1 md:grid-cols-[minmax(320px,1fr)_minmax(400px,1.4fr)]">
+				<ChatPanel agent={agent} />
+				<ResourcesPanel
+					openDocs={openDocs}
+					activeKey={activeKey}
+					onSelect={setActiveKey}
+					onOpen={openByKey}
+					onClose={(key) =>
+						setOpenDocs((docs) => {
+							const next = docs.filter((doc) => doc.key !== key);
+							if (activeKey === key) setActiveKey(next.at(-1)?.key ?? null);
+							return next;
+						})
+					}
+				/>
+			</main>
+		</div>
 	);
 }
