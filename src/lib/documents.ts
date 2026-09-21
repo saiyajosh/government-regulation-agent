@@ -36,7 +36,9 @@ function parseFrontmatter(raw: string): { meta: Frontmatter; body: string } {
 	return { meta, body: match[2] };
 }
 
-export async function listDocuments(bucket: R2Bucket): Promise<DocumentSummary[]> {
+// Internal: scans the whole bucket. Fine while the library is small; search
+// should move to an index before the library grows to thousands of documents.
+async function listDocuments(bucket: R2Bucket): Promise<DocumentSummary[]> {
 	const listed = await bucket.list();
 	const summaries = await Promise.all(
 		listed.objects.map((object) => getDocument(bucket, object.key)),
