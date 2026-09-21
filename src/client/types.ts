@@ -4,6 +4,9 @@ export interface DocumentSummary {
 	jurisdiction: string;
 	citation: string;
 	sourceUrl: string;
+	level: string;
+	authors: string;
+	issuingBody: string;
 }
 
 export interface DocumentRecord extends DocumentSummary {

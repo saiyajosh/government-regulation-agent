@@ -4,7 +4,7 @@ import { cloudflareAIGatewayProvider } from '@earendil-works/pi-ai/providers/clo
 import { cloudflareAIGatewayAuth } from '@earendil-works/pi-ai/providers/cloudflare-auth';
 import { getCloudflareContext } from '@flue/runtime/cloudflare';
 import { defineTool, setProvider, useDataWriter, useModel, useTool } from '@flue/runtime';
-import { object, string } from 'valibot';
+import { object, optional, picklist, string } from 'valibot';
 import { getDocument, searchDocuments } from '../lib/documents.ts';
 
 // Claude through Cloudflare AI Gateway with a stored (BYOK) provider key.
@@ -49,19 +49,40 @@ function bucket() {
 	return getCloudflareContext().env.DOCUMENTS_BUCKET as R2Bucket;
 }
 
+function search() {
+	return getCloudflareContext().env.AI_SEARCH as AiSearchInstance;
+}
+
 const searchLaws = defineTool({
 	name: 'search_laws',
-	description:
-		'Search the grounded document library for federal, state, county, or municipal acts, laws, regulations, and statutes matching a query (title, jurisdiction, or citation).',
-	input: object({ query: string() }),
+	description: [
+		'Semantic search over the grounded library of federal, state, county, and municipal acts,',
+		'laws, regulations, and statutes. Phrase the query as a natural-language question or',
+		'description of the legal issue (not just keywords). Returns the most relevant documents',
+		'with their best-matching passages, citations, and keys for open_law. Optionally restrict',
+		'to a level of government, or to a jurisdiction exactly as it is named in the library',
+		'(for example "Federal", "California", "Miami-Dade County, Florida", "Oakland, California").',
+	].join(' '),
+	input: object({
+		query: string(),
+		level: optional(picklist(['federal', 'state', 'county', 'municipal'])),
+		jurisdiction: optional(string()),
+	}),
 	async run({ data }) {
-		const results = await searchDocuments(bucket(), data.query);
+		const results = await searchDocuments(search(), bucket(), data.query, {
+			jurisdiction: data.jurisdiction,
+			level: data.level,
+		});
 		return {
-			output: results.map(({ key, title, jurisdiction, citation }) => ({
-				key,
-				title,
-				jurisdiction,
-				citation,
+			output: results.map((match) => ({
+				key: match.key,
+				title: match.title,
+				jurisdiction: match.jurisdiction,
+				citation: match.citation,
+				level: match.level,
+				authors: match.authors,
+				issuingBody: match.issuingBody,
+				excerpts: match.excerpts,
 			})),
 		};
 	},
@@ -88,6 +109,9 @@ function openLaw(writeOpenDocument: WriteOpenDocument) {
 					jurisdiction: doc.jurisdiction,
 					citation: doc.citation,
 					sourceUrl: doc.sourceUrl,
+					level: doc.level,
+					authors: doc.authors,
+					issuingBody: doc.issuingBody,
 					body: doc.body,
 				},
 			};
@@ -111,9 +135,11 @@ export function RegulationAgent() {
 	return [
 		'You are a research assistant that helps people understand United States law:',
 		'federal, state, county, and municipal acts, statutes, and regulations.',
-		'Always ground factual claims in the document library: find candidates with search_laws, then',
-		'open_law the ones that answer the question so the user can read them alongside your reply,',
-		'and cite the document key and citation you used rather than relying on memory.',
+		'Always ground factual claims in the document library: search_laws runs a semantic search and',
+		'returns the most relevant passages with their source documents. Rephrase or narrow the query',
+		'if the first pass misses. Then open_law the documents whose passages actually answer the',
+		'question so the user can read them alongside your reply, quote the relevant text, and cite',
+		'the document key and citation you used rather than relying on memory.',
 		"If nothing in the library covers the question, say so plainly rather than guessing.",
 	].join(' ');
 }
