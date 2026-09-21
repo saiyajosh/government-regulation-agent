@@ -4,7 +4,7 @@ export interface DocumentSummary {
 	jurisdiction: string;
 	citation: string;
 	sourceUrl: string;
-	// federal | state | county | municipal
+	// federal | state | regional | county | municipal
 	level: string;
 	// Free text, comma separated when there are several. Empty when unknown.
 	authors: string;
@@ -74,6 +74,24 @@ export async function getDocument(bucket: R2Bucket, key: string): Promise<Docume
 		authors: meta.authors || '',
 		issuingBody: meta.issuingBody || '',
 	};
+}
+
+// Frontmatter block for a document about to be stored; values are JSON
+// quoted so titles with colons or quotes round-trip through parseFrontmatter.
+export function renderFrontmatter(meta: Omit<DocumentSummary, 'key'>) {
+	const quote = (value: string) => JSON.stringify(value);
+	return [
+		'---',
+		`title: ${quote(meta.title)}`,
+		`jurisdiction: ${quote(meta.jurisdiction)}`,
+		`level: ${quote(meta.level)}`,
+		`citation: ${quote(meta.citation)}`,
+		`sourceUrl: ${quote(meta.sourceUrl)}`,
+		`authors: ${quote(meta.authors)}`,
+		`issuingBody: ${quote(meta.issuingBody)}`,
+		'---',
+		'',
+	].join('\n');
 }
 
 // Store a Markdown document and mirror its frontmatter into R2 custom
