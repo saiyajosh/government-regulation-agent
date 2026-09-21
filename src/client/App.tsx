@@ -1,6 +1,7 @@
 import { useFlueAgent } from '@flue/react';
 import { useEffect, useMemo, useState } from 'react';
 import { Landmark } from 'lucide-react';
+import { cn } from '@/lib/utils';
 import { ChatPanel } from './ChatPanel.tsx';
 import { ResourcesPanel } from './ResourcesPanel.tsx';
 import type { DocumentRecord } from './types.ts';
@@ -23,19 +24,10 @@ export function App() {
 	const conversationId = useMemo(getConversationId, []);
 	const agent = useFlueAgent({ url: `/agents/regulation-agent/${conversationId}` });
 
+	// Documents only enter the Resources panel when the agent opens them; there
+	// is no browsable library, so the panel is hidden until the first open_law.
 	const [openDocs, setOpenDocs] = useState<DocumentRecord[]>([]);
-	// `null` means the Library tab is active.
 	const [activeKey, setActiveKey] = useState<string | null>(null);
-
-	const openByKey = useMemo(() => {
-		return async (key: string) => {
-			const res = await fetch(`/api/documents/${encodeURIComponent(key)}`);
-			if (!res.ok) return;
-			const doc = (await res.json()) as DocumentRecord;
-			setOpenDocs((docs) => (docs.some((d) => d.key === doc.key) ? docs : [...docs, doc]));
-			setActiveKey(doc.key);
-		};
-	}, []);
 
 	// When the agent's open_law tool fires, it streams a named `openDocument`
 	// data part (see useDataWriter in the agent). The tool's own output also
@@ -53,6 +45,8 @@ export function App() {
 		}
 	}, [agent.messages]);
 
+	const showResources = openDocs.length > 0;
+
 	return (
 		<div className="flex h-dvh flex-col bg-background text-foreground">
 			<header className="flex h-12 shrink-0 items-center gap-2 border-b px-4">
@@ -61,21 +55,30 @@ export function App() {
 					Government Regulation Agent
 				</h1>
 			</header>
-			<main className="grid min-h-0 flex-1 grid-cols-1 md:grid-cols-[minmax(320px,1fr)_minmax(400px,1.4fr)]">
-				<ChatPanel agent={agent} />
-				<ResourcesPanel
-					openDocs={openDocs}
-					activeKey={activeKey}
-					onSelect={setActiveKey}
-					onOpen={openByKey}
-					onClose={(key) =>
-						setOpenDocs((docs) => {
-							const next = docs.filter((doc) => doc.key !== key);
-							if (activeKey === key) setActiveKey(next.at(-1)?.key ?? null);
-							return next;
-						})
-					}
+			<main
+				className={cn(
+					'grid min-h-0 flex-1 grid-cols-1',
+					showResources && 'md:grid-cols-[minmax(320px,1fr)_minmax(400px,1.4fr)]',
+				)}
+			>
+				<ChatPanel
+					agent={agent}
+					className={showResources ? 'border-b md:border-r md:border-b-0' : undefined}
 				/>
+				{showResources && (
+					<ResourcesPanel
+						openDocs={openDocs}
+						activeKey={activeKey ?? openDocs[0].key}
+						onSelect={setActiveKey}
+						onClose={(key) =>
+							setOpenDocs((docs) => {
+								const next = docs.filter((doc) => doc.key !== key);
+								if (activeKey === key) setActiveKey(next.at(-1)?.key ?? null);
+								return next;
+							})
+						}
+					/>
+				)}
 			</main>
 		</div>
 	);

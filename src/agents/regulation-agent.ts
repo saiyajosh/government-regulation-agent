@@ -5,7 +5,7 @@ import { cloudflareAIGatewayAuth } from '@earendil-works/pi-ai/providers/cloudfl
 import { getCloudflareContext } from '@flue/runtime/cloudflare';
 import { defineTool, setProvider, useDataWriter, useModel, useTool } from '@flue/runtime';
 import { object, string } from 'valibot';
-import { getDocument, listDocuments, searchDocuments } from '../lib/documents.ts';
+import { getDocument, searchDocuments } from '../lib/documents.ts';
 
 // Claude through Cloudflare AI Gateway with a stored (BYOK) provider key.
 // Pi's built-in gateway provider already does the BYOK dance — it reads
@@ -67,22 +67,6 @@ const searchLaws = defineTool({
 	},
 });
 
-const listLaws = defineTool({
-	name: 'list_laws',
-	description: 'List every document currently available in the grounded document library.',
-	async run() {
-		const results = await listDocuments(bucket());
-		return {
-			output: results.map(({ key, title, jurisdiction, citation }) => ({
-				key,
-				title,
-				jurisdiction,
-				citation,
-			})),
-		};
-	},
-});
-
 type WriteOpenDocument = (data: { key: string; title: string }) => void;
 
 function openLaw(writeOpenDocument: WriteOpenDocument) {
@@ -122,14 +106,19 @@ export function RegulationAgent() {
 		schema: object({ key: string(), title: string() }),
 	});
 	useTool(searchLaws);
-	useTool(listLaws);
 	useTool(openLaw(writeOpenDocument));
 
 	return [
 		'You are a research assistant that helps people understand United States law:',
 		'federal, state, county, and municipal acts, statutes, and regulations.',
-		'Always ground factual claims in the document library via search_laws / list_laws / open_law',
-		'rather than relying on memory, and cite the document key and citation you used.',
+		'Always ground factual claims in the document library: find candidates with search_laws, then',
+		'open_law the ones that answer the question so the user can read them alongside your reply,',
+		'and cite the document key and citation you used rather than relying on memory.',
 		"If nothing in the library covers the question, say so plainly rather than guessing.",
 	].join(' ');
 }
+
+// Pins the durable identity so the generated Durable Object class is
+// `FlueRegulationAgent` (Flue always wraps the identity as `Flue<Name>Agent`,
+// so the function name alone would yield `FlueRegulationAgentAgent`).
+RegulationAgent.agentName = 'Regulation';

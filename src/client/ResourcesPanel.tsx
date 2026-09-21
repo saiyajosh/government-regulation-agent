@@ -1,57 +1,31 @@
-import { ExternalLink, FileText, Library, X } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { ExternalLink, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import {
-	Empty,
-	EmptyDescription,
-	EmptyHeader,
-	EmptyMedia,
-	EmptyTitle,
-} from '@/components/ui/empty';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useCompiledMdx } from './mdx.tsx';
-import type { DocumentRecord, DocumentSummary } from './types.ts';
+import type { DocumentRecord } from './types.ts';
 
-const LIBRARY_TAB = 'library';
-
+// One tab per document the agent has opened via open_law. The panel has no
+// browsable library on purpose: the bucket will hold far too many laws to
+// enumerate, so documents appear only when the agent surfaces them.
 export function ResourcesPanel({
 	openDocs,
 	activeKey,
 	onSelect,
 	onClose,
-	onOpen,
 }: {
 	openDocs: DocumentRecord[];
-	activeKey: string | null;
-	onSelect: (key: string | null) => void;
+	activeKey: string;
+	onSelect: (key: string) => void;
 	onClose: (key: string) => void;
-	onOpen: (key: string) => void;
 }) {
-	const [library, setLibrary] = useState<DocumentSummary[] | null>(null);
-
-	useEffect(() => {
-		fetch('/api/documents')
-			.then((res) => res.json() as Promise<DocumentSummary[]>)
-			.then((docs) => setLibrary(docs))
-			.catch(() => setLibrary([]));
-	}, []);
-
 	return (
-		<Tabs
-			value={activeKey ?? LIBRARY_TAB}
-			onValueChange={(value) => onSelect(value === LIBRARY_TAB ? null : value)}
-			className="min-h-0 gap-0"
-		>
+		<Tabs value={activeKey} onValueChange={onSelect} className="min-h-0 gap-0">
 			<div className="shrink-0 overflow-x-auto border-b">
 				<TabsList variant="line" className="h-10 w-full justify-start px-2">
-					<TabsTrigger value={LIBRARY_TAB} className="flex-none">
-						<Library data-icon="inline-start" />
-						Library
-					</TabsTrigger>
 					{openDocs.map((doc) => (
 						<TabsTrigger key={doc.key} value={doc.key} className="flex-none max-w-64 pr-0.5">
 							<span className="truncate">{doc.title}</span>
@@ -79,11 +53,6 @@ export function ResourcesPanel({
 				</TabsList>
 			</div>
 
-			<TabsContent value={LIBRARY_TAB} className="min-h-0">
-				<ScrollArea className="h-full">
-					<LibraryList library={library} onOpen={onOpen} />
-				</ScrollArea>
-			</TabsContent>
 			{openDocs.map((doc) => (
 				<TabsContent key={doc.key} value={doc.key} className="min-h-0">
 					<ScrollArea className="h-full">
@@ -92,61 +61,6 @@ export function ResourcesPanel({
 				</TabsContent>
 			))}
 		</Tabs>
-	);
-}
-
-function LibraryList({
-	library,
-	onOpen,
-}: {
-	library: DocumentSummary[] | null;
-	onOpen: (key: string) => void;
-}) {
-	if (library === null) {
-		return (
-			<div className="flex flex-col gap-3 p-4">
-				{Array.from({ length: 4 }, (_, i) => (
-					<Skeleton key={i} className="h-12 w-full" />
-				))}
-			</div>
-		);
-	}
-	if (library.length === 0) {
-		return (
-			<Empty className="mt-16 border-0">
-				<EmptyHeader>
-					<EmptyMedia variant="icon">
-						<Library />
-					</EmptyMedia>
-					<EmptyTitle>No documents yet</EmptyTitle>
-					<EmptyDescription>
-						Upload Markdown documents to the R2 bucket to populate the library.
-					</EmptyDescription>
-				</EmptyHeader>
-			</Empty>
-		);
-	}
-	return (
-		<ul className="flex flex-col p-2">
-			{library.map((doc) => (
-				<li key={doc.key}>
-					<Button
-						variant="ghost"
-						onClick={() => onOpen(doc.key)}
-						className="h-auto w-full flex-col items-start gap-1 px-3 py-2.5 text-left whitespace-normal"
-					>
-						<span className="flex items-center gap-2 font-medium">
-							<FileText className="size-4 text-muted-foreground" />
-							{doc.title}
-						</span>
-						<span className="flex flex-wrap gap-1.5 pl-6">
-							<Badge variant="secondary">{doc.jurisdiction}</Badge>
-							{doc.citation && <Badge variant="outline">{doc.citation}</Badge>}
-						</span>
-					</Button>
-				</li>
-			))}
-		</ul>
 	);
 }
 
