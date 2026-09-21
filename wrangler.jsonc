@@ -1,0 +1,31 @@
+{
+	"$schema": "./node_modules/wrangler/config-schema.json",
+	"name": "government-regulation-agent",
+	"compatibility_date": "2026-06-01",
+	"compatibility_flags": ["nodejs_compat"],
+	// Workers Traces shows each agent response as a trace with agent-level
+	// spans: https://flueframework.com/docs/guide/observability/#cloudflare
+	"observability": { "traces": { "enabled": true } },
+	// Every agent generates a Durable Object class named after its identity
+	// (RegulationAgent -> FlueRegulationAgentAgent), and Cloudflare requires a
+	// migration entry for each one. Append a new tag when you add an agent:
+	// https://flueframework.com/docs/guide/cloudflare-target/#managing-migrations
+	"migrations": [{ "tag": "v1", "new_sqlite_classes": ["FlueRegulationAgentAgent"] }],
+	// Workers AI binding: lets useModel('cloudflare/...') run keyless, with no
+	// external provider API key required.
+	"ai": { "binding": "AI" },
+	// Application-owned resources only; Flue's own FLUE_* bindings are
+	// generated automatically and merged in at build time.
+	"r2_buckets": [
+		{
+			"binding": "DOCUMENTS_BUCKET",
+			"bucket_name": "government-regulation-agent",
+		},
+	],
+	// The Vite client build (chat + Resources UI) is served as static assets;
+	// requests to /agents/* and /api/* fall through to the Worker above.
+	"assets": {
+		"directory": "./dist/client",
+		"binding": "ASSETS",
+	},
+}
