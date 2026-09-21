@@ -1,8 +1,8 @@
 # government-regulation-agent
 
-Explore and understand U.S. federal, state, county, and municipal laws and
-regulations: a chat interface backed by a [Flue](https://flueframework.com)
-agent. When the agent opens a law it cites, a tabbed "Resources" panel slides
+Explore and understand greenhouse gas regulation at the federal, California,
+and Bay Area levels (the library is seeded from official sources; see below):
+a chat interface backed by a [Flue](https://flueframework.com) agent. When the agent opens a law it cites, a tabbed "Resources" panel slides
 in beside the chat and renders the sourced Markdown/MDX document; otherwise the
 chat fills the window. Documents are stored in a
 Cloudflare R2 bucket; the app runs on Cloudflare Workers via Vite, Hono, and
@@ -122,50 +122,76 @@ citable unit to open.
 
 ### Seeding script
 
-`scripts/seed.ts` fetches section-level documents from the sources below,
-writes them to `seed/documents/`, and with `--upload` pushes them to R2 with
-the metadata headers set. It needs Node 24 (native TypeScript) and nothing
-else.
-
-Uploads go through the app's `PUT /api/documents/:key` route rather than
-Wrangler, because Wrangler cannot set the R2 custom metadata AI Search filters
-on. Set `SEED_TOKEN` in `.env` (and as a Worker secret for production), start
+`scripts/seed.ts` fetches section-level documents from official sources and
+uploads them through the app's ingest route (Wrangler cannot set the R2
+custom metadata that AI Search filters on). It needs Node 24 and `unzip`.
+Set `SEED_TOKEN` in `.env` (and as a Worker secret for production), start
 `pnpm dev`, then:
 
 ```sh
-node scripts/seed.ts --limit 30 --upload     # all sources, 30 docs each
-node scripts/seed.ts --only ecfr,ca          # a subset, no upload
-SEED_URL=https://<worker>.workers.dev node scripts/seed.ts --upload   # against prod
+# The greenhouse-gas corpus: federal, California, Bay Area. Fast sources first,
+# then the CCR crawl (Cornell LII asks for a 10 s delay between requests, so
+# ~2 hours) as a second process.
+node scripts/seed.ts --profile ghg --only ecfr,uscode,federalRegister,ca,baaqmd,municodeSearch --limit 0 --upload --skip-existing
+node scripts/seed.ts --profile ghg --only ccr --limit 0 --upload --skip-existing
+npx wrangler ai-search jobs create government-regulation-agent
+
+# General sampling and whole-title modes (see the script header).
+node scripts/seed.ts --limit 30 --upload
+node scripts/seed.ts --full --cfr-titles 1,5 --usc-titles 5 --ca-codes GOV --upload --skip-existing
+SEED_URL=https://<worker>.workers.dev node scripts/seed.ts --profile ghg --upload   # against prod
+```
+
+`--skip-existing` makes re-runs resumable. Local dev binds the real bucket
+(`remote: true` in `wrangler.jsonc`) because the AI Search index only covers
+the remote bucket.
+
+To rebuild from scratch, empty the bucket first, then trigger a sync so the
+index drops the old files:
+
+```sh
+curl -X DELETE http://localhost:5173/api/documents -H "authorization: Bearer $SEED_TOKEN"
 npx wrangler ai-search jobs create government-regulation-agent
 ```
 
-Local dev binds the real bucket (`remote: true` in `wrangler.jsonc`) because
-the AI Search index only covers the remote bucket.
+### The greenhouse-gas profile
 
-Sources it uses, and why:
-
-| Level | Source | Access | Notes |
+| Scope | Source | What is taken | Approx. docs |
 | --- | --- | --- | --- |
-| Federal regulations | eCFR versioner API | Public JSON/XML, no key | Section-level XML with citation and agency; the best-structured source here. |
-| Federal statutes | GovInfo U.S. Code HTML | Public, no key | One HTML page per section; the USLM XML from uscode.house.gov is the bulk path if you want whole titles. |
-| Federal rules | Federal Register API | Public JSON, no key | Final rules with agency, effective date, CFR references, and GPO plain text. |
-| State statutes | California leginfo | Public HTML, no key | Per-section pages; section numbers enumerated from the article listing. Other states need their own adapter. |
-| County and municipal codes | Municode JSON API | Public, undocumented | Same API library.municode.com uses; covers thousands of counties and cities. Walks the TOC to section documents. |
+| Federal | eCFR API | 40 CFR 52, 60, 63, 70–78, 80, 86, 87, 97, 98, 600, 1036–1090 (EPA); 10 CFR 429–431 (DOE efficiency); 49 CFR 531–538 (CAFE); 30 CFR 3179 | 8,500 |
+| Federal | uscode.house.gov USLM XML | Clean Air Act (42 U.S.C. 7401–7671q), EPCA (6291–6317), CAFE (49 U.S.C. 32901–32919), IRC clean energy credits | 300 |
+| Federal | Federal Register API | Final rules since 2020 and proposed rules since 2024 matching greenhouse gas, carbon dioxide, methane, fuel economy, energy conservation standards | 1,500 |
+| California | leginfo | HSC div. 25.5 (AB 32 and successors), HSC div. 26 parts 1, 2, 5 (CARB, vehicles), PUC RPS article, plus SB 100, SB 375, CEQA GHG sections | 900 |
+| California | Cornell LII (CCR mirror) | 17 CCR div. 3 ch. 1 subch. 10 (reporting, LCFS, cap-and-trade, methane, refrigerants) and 13 CCR div. 3 ch. 1 (vehicle rules) | 800 |
+| Bay Area | baaqmd.gov (PDF) | Regulation 13 climate pollutants, Regulation 12 rules 15 and 16, Regulation 2 rule 2 | 10 |
+| Bay Area | Municode search | Oakland and San Jose code sections matching climate, gas, EV, efficiency, emissions terms | 200 |
 
-Sources evaluated and not used:
+PDF sources are converted to Markdown by the ingest route with Workers AI.
 
-- **NCSL (National Conference of State Legislatures)**: a research
-  organization, not a statute repository. Its site is behind a WAF and its
-  bill databases are summaries or paywalled. Useful as a directory of state
-  legislature sites, not as a text source.
-- **Open States**: bills and legislators, not enacted codes, and needs an API
-  key.
-- **American Legal Publishing, General Code (ecode360), Justia, Cornell LII**:
-  bot protection blocks scripted access. Municode covers the same tier of
-  municipal codes without that problem.
-- **uscode.house.gov USLM XML**: fine for bulk, but a whole title is a
-  multi-megabyte zip that needs XML parsing; per-section HTML was faster to
-  wire up for a demo.
+### Manual documents (San Francisco)
+
+San Francisco's codes are hosted by American Legal Publishing, which blocks
+scripted access, so its climate provisions are added by hand. From
+`codelibrary.amlegal.com/codes/san_francisco/latest/sf_environment`, save each
+relevant chapter as PDF with the browser's print dialog, then upload it with
+frontmatter supplied as headers:
+
+```sh
+curl -X PUT "http://localhost:5173/api/documents/municipal/san-francisco-ca/env-code-ch9.md" \
+  -H "authorization: Bearer $SEED_TOKEN" -H "content-type: application/pdf" \
+  -H "x-doc-title: SF Environment Code Chapter 9 - Greenhouse Gas Emissions Targets" \
+  -H "x-doc-jurisdiction: San Francisco, California" -H "x-doc-level: municipal" \
+  -H "x-doc-citation: S.F. Envt. Code ch. 9" \
+  -H "x-doc-source-url: https://codelibrary.amlegal.com/codes/san_francisco/latest/sf_environment/0-0-0-38955" \
+  -H "x-doc-issuing-body: San Francisco Board of Supervisors" \
+  --data-binary @env-code-ch9.pdf
+```
+
+Chapters worth adding: Environment Code chapters 7 (green building), 9 (GHG
+targets), 20 (existing buildings energy performance), and 30 (all-electric
+new construction); Building Code chapter 13C (green building). Markdown works
+the same way with `content-type: text/markdown` and frontmatter in the body.
+After uploading, run `npx wrangler ai-search jobs create government-regulation-agent`.
 
 ## Deploy
 

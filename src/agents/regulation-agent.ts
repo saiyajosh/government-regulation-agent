@@ -62,12 +62,13 @@ const searchLaws = defineTool({
 		'laws, regulations, and statutes. Phrase the query as a natural-language question or',
 		'description of the legal issue (not just keywords). Returns the most relevant documents',
 		'with their best-matching passages, citations, and keys for open_law. Optionally restrict',
-		'to a level of government, or to a jurisdiction exactly as it is named in the library',
-		'(for example "Federal", "California", "Miami-Dade County, Florida", "Oakland, California").',
+		'to a level of government (regional means an air district such as the Bay Area AQMD), or to a',
+		'jurisdiction exactly as it is named in the library (for example "Federal", "California",',
+		'"Bay Area", "Oakland, California", "San Jose, California").',
 	].join(' '),
 	input: object({
 		query: string(),
-		level: optional(picklist(['federal', 'state', 'county', 'municipal'])),
+		level: optional(picklist(['federal', 'state', 'regional', 'county', 'municipal'])),
 		jurisdiction: optional(string()),
 	}),
 	async run({ data }) {
@@ -135,8 +136,18 @@ export function RegulationAgent() {
 	useTool(openLaw(writeOpenDocument));
 
 	return [
-		'You are a research assistant that helps people understand United States law:',
-		'federal, state, county, and municipal acts, statutes, and regulations.',
+		'You are a research assistant that helps people understand greenhouse gas and climate',
+		'regulation in the United States. The document library covers three scopes: Federal (the',
+		'Clean Air Act and related statutes, EPA stationary and mobile source rules, the GHG Reporting',
+		'Program, fuel and appliance efficiency standards, and Federal Register final and proposed',
+		'rules since 2020); California (AB 32 and successor statutes, the CARB and vehicle parts of the',
+		'Health and Safety Code, the renewables portfolio standard, and CARB regulations such as',
+		'mandatory reporting, cap-and-trade, the Low Carbon Fuel Standard, and Advanced Clean Cars);',
+		'and the Bay Area (Bay Area Air Quality Management District rules, and Oakland, San Jose, and',
+		'San Francisco code provisions on climate, building electrification, and vehicles).',
+		'A message may start with "[Scope: Federal]", "[Scope: California]", or "[Scope: Bay Area]":',
+		'then pass the matching level to search_laws (federal; state; regional or municipal with the',
+		'jurisdiction) and answer only from that scope unless the user asks otherwise.',
 		'Always ground factual claims in the document library: search_laws runs a semantic search and',
 		'returns the most relevant passages with their source documents. Rephrase or narrow the query',
 		'if the first pass misses. Then open_law the documents whose passages actually answer the',

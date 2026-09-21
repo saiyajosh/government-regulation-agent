@@ -15,6 +15,10 @@
 //   --municode-state CA     every city on Municode in that state (counties too
 //                           with --municode-counties)
 //
+// --profile ghg ignores the flags above and seeds a curated greenhouse-gas
+// corpus (federal, California, Bay Area) defined in PROFILES below, adding
+// the ccr, baaqmd, and municodeSearch sources.
+//
 // Every document is one citable unit (a statute section, a CFR section, a
 // Federal Register rule, a code section) written as Markdown with frontmatter.
 // Uploads go through the app's PUT /api/documents/:key route (Wrangler cannot
@@ -46,6 +50,7 @@ const FR_SINCE = flag('fr-since');
 const CA_CODES = (flag('ca-codes') ?? 'GOV').split(',');
 const MUNICODE_STATE = flag('municode-state') ?? 'CA';
 const MUNICODE_COUNTIES = args.includes('--municode-counties');
+const PROFILE = flag('profile');
 // Declared before any top-level await so the helpers below can see them.
 const HEADERS = {
 	'User-Agent': 'government-regulation-agent-seed/1.0',
@@ -68,11 +73,71 @@ interface Doc {
 	authors: string;
 	issuingBody: string;
 	body: string;
+	// When set, the PDF is uploaded instead of `body` and converted server-side.
+	pdfUrl?: string;
 }
 
 // Each source pushes documents as it finds them so uploads overlap with
 // fetching and a crash keeps what was already stored.
 type Emit = (doc: Doc) => Promise<void>;
+
+// Curated corpora. Section counts are from the live sources as of Sept 2026.
+const PROFILES = {
+	ghg: {
+		// Whole CFR parts: EPA stationary and mobile source programs, GHG
+		// reporting, fuels, DOE appliance efficiency, NHTSA fuel economy, BLM
+		// methane waste prevention. ~8,500 sections.
+		cfrParts: [
+			...[52, 60, 63, 70, 71, 72, 73, 74, 75, 76, 77, 78, 80, 86, 87, 97, 98, 600, 1036, 1037, 1039, 1042, 1043, 1045, 1048, 1051, 1054, 1060, 1065, 1066, 1068, 1074, 1090].map((part) => ({ title: 40, part: String(part) })),
+			...[429, 430, 431].map((part) => ({ title: 10, part: String(part) })),
+			...[531, 533, 535, 536, 537, 538].map((part) => ({ title: 49, part: String(part) })),
+			{ title: 30, part: '3179' },
+		],
+		// Clean Air Act, EPCA appliance standards, CAFE, and the IRA/IRC clean
+		// energy credits.
+		uscRanges: [
+			{ title: '42', from: 7401, to: 7671 },
+			{ title: '42', from: 6291, to: 6317 },
+			{ title: '49', from: 32901, to: 32919 },
+			{ title: '26', list: ['25C', '25D', '30C', '30D', '45L', '45Q', '45U', '45V', '45W', '45X', '45Y', '45Z', '48', '48C', '48E', '179D'] },
+		] as ({ title: string; from: number; to: number } | { title: string; list: string[] })[],
+		frQueries: [
+			...['"greenhouse gas"', '"carbon dioxide"', 'methane', '"fuel economy"', '"energy conservation standards"'].map((term) => ({ term, type: 'RULE', since: '2020-01-01' })),
+			...['"greenhouse gas"', '"carbon dioxide"', 'methane', '"fuel economy"'].map((term) => ({ term, type: 'PRORULE', since: '2024-01-01' })),
+		],
+		// leginfo branches: AB 32 and successors, CARB and vehicle parts of the
+		// air resources division, the renewables portfolio standard.
+		caPaths: [
+			{ code: 'HSC', match: { division: '25.5.' } as Record<string, string> },
+			{ code: 'HSC', match: { division: '26.', part: '1.' } },
+			{ code: 'HSC', match: { division: '26.', part: '2.' } },
+			{ code: 'HSC', match: { division: '26.', part: '5.' } },
+			{ code: 'PUC', match: { division: '1.', part: '1.', chapter: '2.3.', article: '16.' } },
+		],
+		// Individual sections outside those branches (SB 100, SB 375, CEQA GHG,
+		// energy commission climate duties). Unknown numbers are skipped.
+		caSections: [
+			{ code: 'PUC', sections: ['399.11', '399.12', '399.13', '399.15', '399.30', '454.51', '454.52', '454.53', '454.54', '8360', '8380'] },
+			{ code: 'GOV', sections: ['65080', '65080.01', '65080.1', '65080.3'] },
+			{ code: 'PRC', sections: ['21083.05', '21099', '21155', '21155.1', '25000.5', '25302', '25310', '25327', '25711.5', '25943'] },
+		],
+		// Cornell LII mirrors the CCR; robots.txt asks for a 10 s crawl delay.
+		ccrStarts: [
+			'/regulations/california/title-17/division-3/chapter-1/subchapter-10',
+			'/regulations/california/title-13/division-3/chapter-1',
+		],
+		baaqmdRules: /Regulation-13|12-Rule-15|12-Rule-16|Regulation-2-Rule-2|Reg-2-Rule-2|9-Rule-10|Regulation-6-Rule-5/i,
+		municodeSearch: {
+			clients: [
+				{ id: 3637, name: 'Oakland', state: 'California', abbr: 'CA' },
+				{ id: 4205, name: 'San Jose', state: 'California', abbr: 'CA' },
+			],
+			terms: ['greenhouse gas', 'climate', 'natural gas', 'electric vehicle', 'energy efficiency', 'emissions', 'all-electric', 'solar', 'building electrification'],
+		},
+	},
+};
+const GHG = PROFILE === 'ghg' ? PROFILES.ghg : undefined;
+if (PROFILE && !GHG) throw new Error(`Unknown profile "${PROFILE}"`);
 
 // ---------------------------------------------------------------------------
 // Sources
@@ -89,14 +154,15 @@ const SOURCES: Record<string, (emit: Emit) => Promise<void>> = {
 			{ title: 1, part: '51' }, // Incorporation by reference (OFR)
 		];
 		const date = await ecfrDate();
-		const titles = FULL ? CFR_TITLES : [...new Set(SAMPLE_PARTS.map((p) => p.title))];
+		const wanted = GHG ? GHG.cfrParts : FULL ? undefined : SAMPLE_PARTS;
+		const titles = wanted ? [...new Set(wanted.map((p) => p.title))] : CFR_TITLES;
 		let count = 0;
 		for (const title of titles) {
 			const structure = await json<EcfrNode>(
 				`https://www.ecfr.gov/api/versioner/v1/structure/current/title-${title}.json`,
 			);
 			const parts = collectWithPath(structure, (n) => n.type === 'part' && !n.reserved).filter(
-				({ node }) => FULL || SAMPLE_PARTS.some((p) => p.title === title && p.part === node.identifier),
+				({ node }) => !wanted || wanted.some((p) => p.title === title && p.part === node.identifier),
 			);
 			for (const { node: part, path: ancestors } of parts) {
 				if (count >= LIMIT) return;
@@ -132,7 +198,9 @@ const SOURCES: Record<string, (emit: Emit) => Promise<void>> = {
 	async uscode(emit) {
 		const download = await text('https://uscode.house.gov/download/download.shtml');
 		let count = 0;
-		for (const title of USC_TITLES) {
+		const ranges = GHG?.uscRanges;
+		const titles = ranges ? [...new Set(ranges.map((r) => r.title))] : USC_TITLES;
+		for (const title of titles) {
 			const padded = title.padStart(2, '0');
 			const zipPath = new RegExp(`releasepoints/us/pl/\\d+/\\d+/xml_usc${padded}@[\\d-]+\\.zip`).exec(download)?.[0];
 			if (!zipPath) throw new Error(`No USLM release found for title ${title}`);
@@ -146,7 +214,13 @@ const SOURCES: Record<string, (emit: Emit) => Promise<void>> = {
 			for (const match of xml.matchAll(/<section\b[^>]*identifier="\/us\/usc\/t\w+\/s([^"]+)"[^>]*>([\s\S]*?)<\/section>/g)) {
 				if (count >= LIMIT) return;
 				const [, section, inner] = match;
-				if (!FULL && !/^55[1-9]/.test(section)) continue;
+				if (ranges) {
+					const numeric = Number(/^\d+/.exec(section)?.[0]);
+					const inRange = ranges.some(
+						(r) => r.title === title && ('list' in r ? r.list.includes(section) : numeric >= r.from && numeric <= r.to),
+					);
+					if (!inRange) continue;
+				} else if (!FULL && !/^55[1-9]/.test(section)) continue;
 				const num = /<num[^>]*>([\s\S]*?)<\/num>/.exec(inner)?.[1] ?? `§ ${section}`;
 				const heading = /<heading[^>]*>([\s\S]*?)<\/heading>/.exec(inner)?.[1] ?? '';
 				if (/repealed|reserved|omitted/i.test(heading) && inner.length < 600) continue;
@@ -176,19 +250,25 @@ const SOURCES: Record<string, (emit: Emit) => Promise<void>> = {
 	// GPO plain-text body. Agencies become the issuing body.
 	async federalRegister(emit) {
 		const fields = ['title', 'document_number', 'citation', 'publication_date', 'effective_on', 'agency_names', 'cfr_references', 'abstract', 'html_url', 'raw_text_url'];
-		const first = new URL('https://www.federalregister.gov/api/v1/documents.json');
-		first.searchParams.set('per_page', '100');
-		first.searchParams.append('conditions[type][]', 'RULE');
-		first.searchParams.set('order', 'newest');
-		if (FR_SINCE) first.searchParams.set('conditions[publication_date][gte]', FR_SINCE);
-		for (const field of fields) first.searchParams.append('fields[]', field);
-		let next: string | undefined = first.toString();
+		const queries = GHG?.frQueries ?? [{ term: undefined, type: 'RULE', since: FR_SINCE }];
+		const seen = new Set<string>();
 		let count = 0;
-		while (next && count < LIMIT) {
+		for (const query of queries) {
+			const first = new URL('https://www.federalregister.gov/api/v1/documents.json');
+			first.searchParams.set('per_page', '100');
+			first.searchParams.append('conditions[type][]', query.type);
+			first.searchParams.set('order', 'newest');
+			if (query.term) first.searchParams.set('conditions[term]', query.term);
+			if (query.since) first.searchParams.set('conditions[publication_date][gte]', query.since);
+			for (const field of fields) first.searchParams.append('fields[]', field);
+			let next: string | undefined = first.toString();
+			while (next && count < LIMIT) {
 			const page: { results: FrDoc[]; next_page_url?: string } = await json(next);
 			next = page.next_page_url;
 			for (const rule of page.results) {
 				if (count >= LIMIT) return;
+				if (seen.has(rule.document_number)) continue;
+				seen.add(rule.document_number);
 				count += 1;
 				const raw = await text(rule.raw_text_url).catch(() => '');
 				if (!raw) continue;
@@ -206,7 +286,7 @@ const SOURCES: Record<string, (emit: Emit) => Promise<void>> = {
 					body: [
 						`# ${rule.title}`,
 						'',
-						`**Published:** ${rule.publication_date}` +
+						`**${query.type === 'PRORULE' ? 'Proposed rule, published' : 'Final rule, published'}:** ${rule.publication_date}` +
 							(rule.effective_on ? `  **Effective:** ${rule.effective_on}` : '') +
 							(cfr ? `  **Amends:** ${cfr}` : ''),
 						'',
@@ -217,6 +297,7 @@ const SOURCES: Record<string, (emit: Emit) => Promise<void>> = {
 					].join('\n'),
 				});
 			}
+			}
 		}
 	},
 
@@ -226,17 +307,21 @@ const SOURCES: Record<string, (emit: Emit) => Promise<void>> = {
 	// response. Sample mode covers Government Code chapter 3.5 (the CA APA).
 	async ca(emit) {
 		const base = 'https://leginfo.legislature.ca.gov/faces';
-		const codes = !FULL
-			? ['GOV']
-			: CA_CODES.includes('all')
-				? [...new Set([...(await text(`${base}/codes.xhtml`)).matchAll(/tocCode=([A-Z]+)/g)].map((m) => m[1]))]
-				: CA_CODES;
+		const codes = GHG
+			? [...new Set(GHG.caPaths.map((p) => p.code))]
+			: !FULL
+				? ['GOV']
+				: CA_CODES.includes('all')
+					? [...new Set([...(await text(`${base}/codes.xhtml`)).matchAll(/tocCode=([A-Z]+)/g)].map((m) => m[1]))]
+					: CA_CODES;
 		let count = 0;
 		const seen = new Set<string>();
 		for (const code of codes) {
-			const leaves = FULL
-				? await caLeafPages(base, code)
-				: [`${base}/codes_displayText.xhtml?lawCode=GOV&division=3.&title=2.&part=1.&chapter=3.5.`];
+			const leaves = GHG
+				? (await Promise.all(GHG.caPaths.filter((p) => p.code === code).map((p) => caLeafPages(base, code, p.match)))).flat()
+				: FULL
+					? await caLeafPages(base, code)
+					: [`${base}/codes_displayText.xhtml?lawCode=GOV&division=3.&title=2.&part=1.&chapter=3.5.`];
 			for (const leaf of leaves) {
 				if (count >= LIMIT) return;
 				const page = await text(leaf).catch(() => '');
@@ -274,6 +359,176 @@ const SOURCES: Record<string, (emit: Emit) => Promise<void>> = {
 						body: [`# ${codeName} § ${number}`, '', crumbs.length ? `*${crumbs.join(' › ')}*\n` : '', htmlToMarkdown(bodyHtml)].join('\n'),
 					});
 				}
+			}
+		}
+		// Individually listed sections, fetched one page each.
+		for (const { code, sections } of GHG?.caSections ?? []) {
+			for (const number of sections) {
+				if (count >= LIMIT || seen.has(`${code}:${number}`)) continue;
+				const url = `${base}/codes_displaySection.xhtml?lawCode=${code}&sectionNum=${number}.`;
+				const html = await text(url).catch(() => '');
+				const section = /<div id="codeLawSectionNoHead"[^>]*>([\s\S]*?)<\/div>\s*<\/div>/.exec(html)?.[1];
+				if (!section) continue;
+				const codeName = decodeEntities(new RegExp(`<b>([^<]+?) - ${code}</b>`).exec(html)?.[1] ?? code);
+				const lines = htmlToMarkdown(section).split('\n');
+				const start = lines.findIndex((line) => line.startsWith(`### ${number}`));
+				const crumbs = lines
+					.slice(0, Math.max(start, 0))
+					.filter((line) => /^### (TITLE|DIVISION|PART|CHAPTER|ARTICLE)\b/.test(line))
+					.map((line) => line.slice(4).replace(/\s*\[[\d.\s-]+\]$/, ''));
+				seen.add(`${code}:${number}`);
+				count += 1;
+				await emit({
+					key: `california/${code.toLowerCase()}/${code.toLowerCase()}-${number}.md`,
+					title: `Cal. ${caShort(codeName, code)} § ${number}`,
+					jurisdiction: 'California',
+					level: 'state',
+					citation: `Cal. ${caShort(codeName, code)} § ${number}`,
+					sourceUrl: url,
+					authors: '',
+					issuingBody: 'California State Legislature',
+					body: [`# ${codeName} § ${number}`, '', crumbs.length ? `*${crumbs.join(' › ')}*\n` : '', lines.slice(start + 1).join('\n')].join('\n'),
+				});
+			}
+		}
+	},
+
+	// California Code of Regulations via Cornell LII's mirror (the official
+	// host is a JavaScript app with no API). Crawls from each start page down
+	// through articles and subarticles to section pages, one request every
+	// 10 seconds as its robots.txt asks. Profile only.
+	async ccr(emit) {
+		if (!GHG) return console.log('  ccr runs only with --profile ghg');
+		const base = 'https://www.law.cornell.edu';
+		const pause = () => new Promise((resolve) => setTimeout(resolve, 10_000));
+		let count = 0;
+		for (const start of GHG.ccrStarts) {
+			const queue = [start];
+			const seen = new Set<string>();
+			const sections = new Set<string>();
+			while (queue.length) {
+				const url = queue.shift()!;
+				if (seen.has(url)) continue;
+				seen.add(url);
+				await pause();
+				const page = await text(`${base}${url}`).catch(() => '');
+				for (const m of page.matchAll(/href="(\/regulations\/california\/[^"]+)"/g)) {
+					const href = m[1];
+					if (/^\/regulations\/california\/\d+-CCR-/.test(href)) sections.add(href);
+					else if (href.startsWith(`${url}/`) && !seen.has(href)) queue.push(href);
+				}
+			}
+			for (const href of sections) {
+				if (count >= LIMIT) return;
+				await pause();
+				const page = await text(`${base}${href}`).catch(() => '');
+				const heading = decodeEntities(/<title>([^<]*?)\s*\|/.exec(page)?.[1] ?? href);
+				const [, ccrTitle, section] = /Tit\.\s*(\d+),\s*§\s*([\d.]+)/.exec(heading) ?? [];
+				const body = /<div[^>]*class="[^"]*statereg-text[^"]*"[^>]*>([\s\S]*?)<div[^>]*class="[^"]*statereg-notes/.exec(page)?.[1]
+					?? /<div[^>]*class="[^"]*statereg-text[^"]*"[^>]*>([\s\S]*?)<\/div>\s*<\/div>/.exec(page)?.[1];
+				if (!ccrTitle || !section || !body) continue;
+				const crumbs = [...page.matchAll(/<div id="breadcrumb"[\s\S]*?<\/div>/g)]
+					.flatMap((m) => [...m[0].matchAll(/>([^<]{3,120})<\/a>/g)].map((x) => decodeEntities(x[1]).trim()))
+					.filter((c) => /^(Title|Division|Chapter|Subchapter|Article|Subarticle)\b/i.test(c));
+				count += 1;
+				await emit({
+					key: `california/ccr/${ccrTitle}-ccr-${section}.md`,
+					title: heading,
+					jurisdiction: 'California',
+					level: 'state',
+					citation: `Cal. Code Regs. tit. ${ccrTitle}, § ${section}`,
+					sourceUrl: `${base}${href}`,
+					authors: '',
+					issuingBody: 'California Air Resources Board',
+					body: [`# ${heading}`, '', crumbs.length ? `*${crumbs.join(' › ')}*\n` : '', htmlToMarkdown(body)].join('\n'),
+				});
+			}
+		}
+	},
+
+	// Bay Area Air Quality Management District rules, published as PDFs on
+	// rule pages. The ingest route converts PDFs to Markdown. Profile only.
+	async baaqmd(emit) {
+		if (!GHG) return console.log('  baaqmd runs only with --profile ghg');
+		const base = 'https://www.baaqmd.gov';
+		const index = await text(`${base}/rules-and-compliance/current-rules`);
+		const pages = [...new Set([...index.matchAll(/href="(\/en\/Rules-and-Compliance\/Rules\/[^"]+)"/g)].map((m) => decodeEntities(m[1]).replace(/\?.*$/, '')))].filter((href) => GHG.baaqmdRules.test(href));
+		let count = 0;
+		for (const href of pages) {
+			if (count >= LIMIT) return;
+			const page = await text(`${base}${href}`).catch(() => '');
+			const title = decodeEntities(/<title>([^<]*)<\/title>/.exec(page)?.[1] ?? href).trim();
+			// Prefer the adopted rule text over draft and workshop versions.
+			const links = [...page.matchAll(/<a[^>]*href="([^"]*\.pdf[^"]*)"[^>]*>([\s\S]*?)<\/a>/gi)].map((m) => ({
+				href: decodeEntities(m[1]),
+				label: m[2].replace(/<[^>]+>/g, '').trim(),
+			}));
+			const pdf = links.find((l) => !/draft|workshop|staff report|appendix/i.test(l.label)) ?? links[0];
+			if (!pdf) continue;
+			const rule = /Regulation\s*(\d+)(?:,?\s*Rule\s*(\d+))?/i.exec(title);
+			const citation = rule ? `BAAQMD Reg. ${rule[1]}${rule[2] ? `-${rule[2]}` : ''}` : 'BAAQMD Rule';
+			count += 1;
+			await emit({
+				key: `regional/baaqmd/${citation.toLowerCase().replace(/[^a-z0-9]+/g, '-')}.md`,
+				title,
+				jurisdiction: 'Bay Area',
+				level: 'regional',
+				citation,
+				sourceUrl: `${base}${href}`,
+				authors: '',
+				issuingBody: 'Bay Area Air Quality Management District',
+				body: '',
+				pdfUrl: pdf.href.startsWith('http') ? pdf.href : `${base}${pdf.href}`,
+			});
+		}
+	},
+
+	// Municipal code sections found by Municode's full-text search for the
+	// profile's terms, then fetched by node id. Profile only.
+	async municodeSearch(emit) {
+		if (!GHG) return console.log('  municodeSearch runs only with --profile ghg');
+		const api = 'https://api.municode.com';
+		let count = 0;
+		for (const client of GHG.municodeSearch.clients) {
+			const hits = new Map<string, MunicodeHit>();
+			for (const term of GHG.municodeSearch.terms) {
+				for (let pageNum = 1; pageNum < 20; pageNum += 1) {
+					const page = await json<{ Hits: MunicodeHit[]; NumberOfHits: number }>(
+						`${api}/search?clientId=${client.id}&searchText=${encodeURIComponent(term)}&pageNum=${pageNum}&pageSize=50&contentTypeId=CODES`,
+					).catch(() => null);
+					if (!page?.Hits.length) break;
+					for (const hit of page.Hits) hits.set(hit.NodeId, hit);
+					if (pageNum * 50 >= page.NumberOfHits) break;
+				}
+			}
+			const jobs = new Map<string, number>();
+			const slug = `${client.name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${client.abbr.toLowerCase()}`;
+			for (const hit of hits.values()) {
+				if (count >= LIMIT) return;
+				const productId = hit.Product.Id;
+				if (!jobs.has(productId)) {
+					const job = await json<{ Id: number }>(`${api}/Jobs/latest/${productId}`).catch(() => null);
+					jobs.set(productId, job?.Id ?? 0);
+				}
+				const jobId = jobs.get(productId);
+				if (!jobId) continue;
+				const page = await json<{ Docs: MunicodeDoc[] }>(`${api}/CodesContent?jobId=${jobId}&nodeId=${hit.NodeId}&productId=${productId}`).catch(() => null);
+				const section = page?.Docs.find((d) => d.Id === hit.NodeId);
+				if (!section || section.Content.length <= 80) continue;
+				const number = /^(?:sec(?:tion)?\.?\s*)?([\dA-Z.-]+?)\.?\s*-\s/i.exec(section.Title)?.[1];
+				const cite = `${client.name} Municipal Code`;
+				count += 1;
+				await emit({
+					key: `municipal/${slug}/${section.Id.toLowerCase()}.md`,
+					title: `${cite} ${section.Title.replace(/\s*-\s*/, ' — ')}`,
+					jurisdiction: `${client.name}, ${client.state}`,
+					level: 'municipal',
+					citation: number ? `${cite} § ${number}` : cite,
+					sourceUrl: `https://library.municode.com/${client.abbr.toLowerCase()}/${slug.replace(/-[a-z]{2}$/, '')}/codes/code_of_ordinances?nodeId=${section.Id}`,
+					authors: '',
+					issuingBody: `${client.name} City Council`,
+					body: [`# ${section.Title}`, '', `*${hit.Ancestors.slice(1).map((a) => a.Title).join(' › ')}*`, '', htmlToMarkdown(section.Content)].join('\n'),
+				});
 			}
 		}
 	},
@@ -361,7 +616,8 @@ for (const [name, run] of selected) {
 		const task = (async () => {
 			const file = path.join(OUT_DIR, doc.key);
 			await mkdir(path.dirname(file), { recursive: true });
-			await writeFile(file, render(doc));
+			const pdf = doc.pdfUrl ? Buffer.from(await (await request(doc.pdfUrl)).arrayBuffer()) : null;
+			await writeFile(pdf ? file.replace(/\.md$/, '.pdf') : file, pdf ?? render(doc));
 			stats.written += 1;
 			if (!UPLOAD) return;
 			if (SKIP_EXISTING && (await fetch(`${SEED_URL}/api/documents/${doc.key}`, { method: 'HEAD' })).ok) {
@@ -370,8 +626,20 @@ for (const [name, run] of selected) {
 			}
 			const response = await fetch(`${SEED_URL}/api/documents/${doc.key}`, {
 				method: 'PUT',
-				headers: { authorization: `Bearer ${SEED_TOKEN}`, 'content-type': 'text/markdown' },
-				body: render(doc),
+				headers: pdf
+					? {
+							authorization: `Bearer ${SEED_TOKEN}`,
+							'content-type': 'application/pdf',
+							'x-doc-title': ascii(doc.title),
+							'x-doc-jurisdiction': ascii(doc.jurisdiction),
+							'x-doc-level': doc.level,
+							'x-doc-citation': ascii(doc.citation),
+							'x-doc-source-url': doc.sourceUrl,
+							'x-doc-authors': ascii(doc.authors),
+							'x-doc-issuing-body': ascii(doc.issuingBody),
+						}
+					: { authorization: `Bearer ${SEED_TOKEN}`, 'content-type': 'text/markdown' },
+				body: pdf ?? render(doc),
 			});
 			if (!response.ok) {
 				stats.failed += 1;
@@ -422,7 +690,14 @@ async function readEnvToken() {
 
 // Crawl a California code's TOC to the leaf branches and return their text
 // page URLs. Branch pages link deeper branches; leaves link a text page.
-async function caLeafPages(base: string, code: string) {
+// `match` narrows the crawl to one subtree: a branch or leaf URL qualifies
+// when each given level is either equal or still unset (an ancestor page).
+async function caLeafPages(base: string, code: string, match: Record<string, string> = {}) {
+	const qualifies = (url: string, leaf: boolean) =>
+		Object.entries(match).every(([level, value]) => {
+			const actual = new URL(url).searchParams.get(level) ?? '';
+			return actual === value || (!leaf && actual === '');
+		});
 	const leaves = new Set<string>();
 	const seenBranches = new Set<string>();
 	const queue = [`${base}/codesTOCSelected.xhtml?tocCode=${code}`];
@@ -433,11 +708,19 @@ async function caLeafPages(base: string, code: string) {
 		const page = await text(url).catch(() => '');
 		for (const m of page.matchAll(/codes_displayexpandedbranch\.xhtml\?[^"']+/g)) {
 			const next = `${base}/${decodeEntities(m[0])}`;
-			if (!seenBranches.has(next)) queue.push(next);
+			if (!seenBranches.has(next) && qualifies(next, false)) queue.push(next);
 		}
-		for (const m of page.matchAll(/codes_displayText\.xhtml\?[^"']+/g)) leaves.add(`${base}/${decodeEntities(m[0])}`);
+		for (const m of page.matchAll(/codes_displayText\.xhtml\?[^"']+/g)) {
+			const leaf = `${base}/${decodeEntities(m[0])}`;
+			if (qualifies(leaf, true)) leaves.add(leaf);
+		}
 	}
 	return [...leaves];
+}
+
+// R2 custom metadata and HTTP headers must be ASCII.
+function ascii(value: string) {
+	return value.replace(/§/g, 'Sec.').replace(/[—–]/g, '-').replace(/[^\x20-\x7e]/g, '').trim();
 }
 
 function caShort(codeName: string, code: string) {
@@ -549,6 +832,13 @@ interface TocNode {
 	Id: string;
 	Heading: string;
 	HasChildren: boolean;
+}
+
+interface MunicodeHit {
+	NodeId: string;
+	Title: string;
+	Product: { Id: string; Name: string };
+	Ancestors: { NodeId: string; Title: string }[];
 }
 
 interface MunicodeDoc {
