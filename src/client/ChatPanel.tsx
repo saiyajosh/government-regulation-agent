@@ -14,7 +14,13 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Textarea } from '@/components/ui/textarea';
 import { cn } from '@/lib/utils';
 
-export function ChatPanel({ agent }: { agent: ReturnType<typeof useFlueAgent> }) {
+export function ChatPanel({
+	agent,
+	className,
+}: {
+	agent: ReturnType<typeof useFlueAgent>;
+	className?: string;
+}) {
 	const [input, setInput] = useState('');
 	const bottomRef = useRef<HTMLDivElement>(null);
 	const busy = agent.status === 'submitted' || agent.status === 'streaming';
@@ -34,9 +40,9 @@ export function ChatPanel({ agent }: { agent: ReturnType<typeof useFlueAgent> })
 	const visible = agent.messages.filter((message) => message.display === 'visible');
 
 	return (
-		<section className="flex min-h-0 flex-col border-b md:border-r md:border-b-0">
+		<section className={cn('flex min-h-0 flex-col', className)}>
 			<ScrollArea className="min-h-0 flex-1">
-				<div className="flex flex-col gap-4 p-4" aria-live="polite">
+				<div className="mx-auto flex w-full max-w-3xl flex-col gap-4 p-4" aria-live="polite">
 					{visible.length === 0 && (
 						<Empty className="mt-16 border-0">
 							<EmptyHeader>
@@ -89,7 +95,8 @@ export function ChatPanel({ agent }: { agent: ReturnType<typeof useFlueAgent> })
 				</div>
 			</ScrollArea>
 
-			<form onSubmit={submit} className="flex items-end gap-2 border-t p-3">
+			<form onSubmit={submit} className="border-t p-3">
+				<div className="mx-auto flex w-full max-w-3xl items-end gap-2">
 				<Textarea
 					value={input}
 					onChange={(event) => setInput(event.target.value)}
@@ -110,6 +117,7 @@ export function ChatPanel({ agent }: { agent: ReturnType<typeof useFlueAgent> })
 				>
 					{busy ? <Loader2 className="animate-spin" /> : <SendHorizontal />}
 				</Button>
+				</div>
 			</form>
 		</section>
 	);
