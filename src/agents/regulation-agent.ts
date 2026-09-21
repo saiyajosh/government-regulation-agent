@@ -1,8 +1,49 @@
 'use agent';
+import { createProvider } from '@earendil-works/pi-ai';
+import { cloudflareAIGatewayProvider } from '@earendil-works/pi-ai/providers/cloudflare-ai-gateway';
+import { cloudflareAIGatewayAuth } from '@earendil-works/pi-ai/providers/cloudflare-auth';
 import { getCloudflareContext } from '@flue/runtime/cloudflare';
-import { defineTool, useDataWriter, useModel, useTool } from '@flue/runtime';
+import { defineTool, setProvider, useDataWriter, useModel, useTool } from '@flue/runtime';
 import { object, string } from 'valibot';
 import { getDocument, listDocuments, searchDocuments } from '../lib/documents.ts';
+
+// Claude through Cloudflare AI Gateway with a stored (BYOK) provider key.
+// Pi's built-in gateway provider already does the BYOK dance — it reads
+// CLOUDFLARE_API_KEY / CLOUDFLARE_ACCOUNT_ID / CLOUDFLARE_GATEWAY_ID, sends
+// `cf-aig-authorization`, and strips the provider `x-api-key` header so the
+// gateway injects the stored key. Our key is stored under a non-default alias,
+// which the gateway only honors on direct provider requests when named via
+// `cf-aig-byok-alias`, so re-register the provider with that header added.
+// Registered here rather than in app.ts so `flue run` (which loads only the
+// agent module) picks it up too.
+const gatewayAuth = cloudflareAIGatewayAuth();
+setProvider(
+	createProvider({
+		id: 'cloudflare-ai-gateway',
+		name: 'Cloudflare AI Gateway (BYOK)',
+		auth: {
+			apiKey: {
+				...gatewayAuth,
+				async resolve(input) {
+					const resolved = await gatewayAuth.resolve(input);
+					const alias = await input.ctx.env('CLOUDFLARE_AI_GATEWAY_BYOK_ALIAS');
+					if (!resolved || !alias) return resolved;
+					return {
+						...resolved,
+						auth: {
+							...resolved.auth,
+							headers: { ...resolved.auth.headers, 'cf-aig-byok-alias': alias },
+						},
+					};
+				},
+			},
+		},
+		models: cloudflareAIGatewayProvider()
+			.getModels()
+			.filter((model) => model.id.startsWith('claude-')),
+		api: cloudflareAIGatewayProvider(),
+	}),
+);
 
 function bucket() {
 	return getCloudflareContext().env.DOCUMENTS_BUCKET as R2Bucket;
@@ -71,11 +112,11 @@ function openLaw(writeOpenDocument: WriteOpenDocument) {
 }
 
 export function RegulationAgent() {
-	// Keyless: runs on Workers AI through Cloudflare AI Gateway (dashboard
-	// observability, caching, budget controls) with no provider API key.
-	// Swap in e.g. useModel('<provider>/<model>') plus
-	// a provider API key in .env for a stronger hosted model instead.
-	useModel('cloudflare/@cf/mistralai/mistral-small-3.1-24b-instruct');
+	// Claude Sonnet 5 via the BYOK gateway provider registered above; the
+	// provider key never leaves Cloudflare. Env: CLOUDFLARE_API_KEY (an AI
+	// Gateway token), CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_GATEWAY_ID,
+	// CLOUDFLARE_AI_GATEWAY_BYOK_ALIAS.
+	useModel('cloudflare-ai-gateway/claude-sonnet-5');
 
 	const writeOpenDocument = useDataWriter('openDocument', {
 		schema: object({ key: string(), title: string() }),
