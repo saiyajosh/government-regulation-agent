@@ -19,7 +19,7 @@
 	//   wrangler secret put CLOUDFLARE_API_KEY
 	"vars": {
 		"CLOUDFLARE_ACCOUNT_ID": "936ee2c1aad5bf0e8ec4f3a612a613e1",
-		"CLOUDFLARE_GATEWAY_ID": "TODO-your-gateway-id",
+		"CLOUDFLARE_GATEWAY_ID": "default",
 		"CLOUDFLARE_AI_GATEWAY_BYOK_ALIAS": "anthropic-takehome-project-key",
 	},
 	// Application-owned resources only; Flue's own FLUE_* bindings are
