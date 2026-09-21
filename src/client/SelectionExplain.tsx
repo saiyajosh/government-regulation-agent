@@ -8,7 +8,7 @@ import type { DocumentRecord } from './types.ts';
 // document prose (with `data-explain-doc` naming the open document) and
 // assistant chat replies. Selecting text is never interrupted; once the
 // selection settles (mouse up, or a keyboard selection) a small hint appears
-// under it, and ⌘⇧Q (or Ctrl⇧Q) opens the question prompt. Answers are
+// under it, and ⌘/ (or Ctrl+/) opens the question prompt. Answers are
 // portaled into a host <div> inserted directly after the block the selection
 // ended in, so the React-owned document/chat trees are never mutated.
 export function SelectionExplain({ openDocs }: { openDocs: DocumentRecord[] }) {
@@ -75,8 +75,9 @@ export function SelectionExplain({ openDocs }: { openDocs: DocumentRecord[] }) {
 		}
 		function onKeyDown(event: KeyboardEvent) {
 			if (event.key === 'Escape') return setPending(null);
-			if (!(event.metaKey || event.ctrlKey) || !event.shiftKey || event.key.toLowerCase() !== 'q')
-				return;
+			// ⌘/ on Mac, Ctrl+/ elsewhere. `code` covers layouts where `/` needs a modifier.
+			if (!(event.metaKey || event.ctrlKey) || event.shiftKey || event.altKey) return;
+			if (event.key !== '/' && event.code !== 'Slash') return;
 			const next = readSelection();
 			setPending((current) => {
 				const base = next ?? current;
@@ -167,7 +168,7 @@ function ShortcutHint({ onActivate }: { onActivate: () => void }) {
 			>
 				Ask a question
 				<kbd className="rounded border bg-muted px-1 font-mono text-[10px] text-foreground/70">
-					{isMac ? '⌘⇧Q' : 'Ctrl+Shift+Q'}
+					{isMac ? '⌘/' : 'Ctrl+/'}
 				</kbd>
 			</button>
 		</div>
