@@ -4,6 +4,13 @@
 		<meta charset="UTF-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
 		<title>Government Regulation Agent</title>
+		<script>
+			// shadcn themes via the `.dark` class; follow the OS preference.
+			const media = matchMedia('(prefers-color-scheme: dark)');
+			const apply = () => document.documentElement.classList.toggle('dark', media.matches);
+			apply();
+			media.addEventListener('change', apply);
+		</script>
 	</head>
 	<body>
 		<div id="root"></div>
