@@ -81,7 +81,7 @@ export function App() {
 					/>
 				)}
 			</main>
-			<SelectionExplain openDocs={openDocs} />
+			<SelectionExplain openDocs={openDocs} chatStarted={agent.messages.length > 0} />
 		</div>
 	);
 }
