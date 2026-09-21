@@ -13,15 +13,22 @@ React.
 pnpm install
 ```
 
-The agent runs keyless by default (Cloudflare Workers AI via AI Gateway — no
-API key, and you get request logging/caching in the Cloudflare dashboard for
-free). To use a hosted provider instead, add its key to `.env` and change the
-`useModel(...)` call in `src/agents/regulation-agent.ts`:
+The agent runs Claude Sonnet 5 through Cloudflare AI Gateway using a stored
+(BYOK) Anthropic key, so the Anthropic key lives in the gateway, not in this
+repo. One-time gateway setup: turn on Authenticated Gateway, store the
+Anthropic key under Provider Keys with the alias below, and create a Cloudflare
+API token with the "AI Gateway: Run" permission. Then fill in `.env`:
 
 ```sh
 # .env
-ANTHROPIC_API_KEY="sk-ant-..."
+CLOUDFLARE_API_KEY="<AI Gateway token>"
+CLOUDFLARE_ACCOUNT_ID="<account id>"
+CLOUDFLARE_GATEWAY_ID="<gateway slug>"
+CLOUDFLARE_AI_GATEWAY_BYOK_ALIAS="anthropic-takehome-project-key"
 ```
+
+For the deployed Worker, the non-secret values are `vars` in `wrangler.jsonc`
+and the token is a secret: `wrangler secret put CLOUDFLARE_API_KEY`.
 
 ## Develop
 
