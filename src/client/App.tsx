@@ -12,10 +12,12 @@ import type { DocumentRecord } from './types.ts';
 
 export function App() {
 	const history = useConversations();
+
 	// Dormant until the server has told us which conversation is ours.
 	const agent = useFlueAgent({
 		url: history.currentId ? `/agents/regulation-agent/${history.currentId}` : undefined,
 	});
+
 	const [drawerOpen, setDrawerOpen] = useState(false);
 
 	// When a reply settles, report its opening text as the list-view snippet.
@@ -23,9 +25,11 @@ export function App() {
 	useEffect(() => {
 		const settled = previousStatus.current === 'streaming' && agent.status === 'idle';
 		previousStatus.current = agent.status;
+
 		if (!settled || !history.currentId) return;
 		const reply = agent.messages.findLast((message) => message.role === 'assistant');
 		const text = reply?.parts.map((part) => (part.type === 'text' ? part.text : '')).join(' ') ?? '';
+
 		if (text.trim()) void history.reportSnippet(history.currentId, text);
 	}, [agent.status, agent.messages, history]);
 

@@ -21,6 +21,7 @@ export function ConversationsDrawer({
 	onClose: () => void;
 }) {
 	if (!open) return null;
+
 	return (
 		<>
 			<button
@@ -79,12 +80,17 @@ export function ConversationsDrawer({
 
 function relativeTime(iso: string) {
 	const seconds = Math.round((Date.now() - new Date(iso).getTime()) / 1000);
+
 	if (seconds < 60) return 'just now';
 	const minutes = Math.round(seconds / 60);
+
 	if (minutes < 60) return `${minutes} min ago`;
 	const hours = Math.round(minutes / 60);
+
 	if (hours < 24) return `${hours} hr ago`;
 	const days = Math.round(hours / 24);
+
 	if (days < 7) return `${days} d ago`;
+
 	return new Date(iso).toLocaleDateString();
 }

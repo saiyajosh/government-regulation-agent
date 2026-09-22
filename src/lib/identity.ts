@@ -2,6 +2,7 @@ import type { Context } from 'hono';
 import { getSignedCookie, setSignedCookie } from 'hono/cookie';
 
 const COOKIE_NAME = 'gra_uid';
+
 const ONE_YEAR = 60 * 60 * 24 * 365;
 
 // Anonymous identity: a random id in a signed, HttpOnly cookie. This is a demo
@@ -12,6 +13,7 @@ const ONE_YEAR = 60 * 60 * 24 * 365;
 export async function requireUser(c: Context) {
 	const secret = cookieSecret(c);
 	const existing = await getSignedCookie(c, secret, COOKIE_NAME);
+
 	if (existing) return existing;
 	const userId = crypto.randomUUID().replaceAll('-', '');
 	await setSignedCookie(c, COOKIE_NAME, userId, secret, {
@@ -21,6 +23,7 @@ export async function requireUser(c: Context) {
 		path: '/',
 		maxAge: ONE_YEAR,
 	});
+
 	return userId;
 }
 
@@ -35,9 +38,13 @@ export function ownsConversation(userId: string, conversationId: string) {
 }
 
 function cookieSecret(c: Context) {
-	// Secrets are not in wrangler.jsonc, so they are absent from the generated
-	// Env type. Set with `wrangler secret put COOKIE_SECRET` (or `.env` locally).
+	// SAFETY: c.env is the Worker's Env; COOKIE_SECRET is a secret set with
+	// `wrangler secret put COOKIE_SECRET` (or `.env` locally), so it is absent
+	// from the generated Env type. The assertion only adds it as optional and
+	// the guard below handles it being unset.
 	const secret = (c.env as Env & { COOKIE_SECRET?: string }).COOKIE_SECRET;
+
 	if (!secret) throw new Error('COOKIE_SECRET is not set');
+
 	return secret;
 }
