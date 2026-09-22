@@ -15,7 +15,7 @@ export function useCompiledMdx(source: string) {
 			.then((module) => {
 				if (!cancelled) setContent(() => module.default);
 			})
-			.catch((err: unknown) => {
+			.catch((err) => {
 				if (!cancelled) setError(err instanceof Error ? err.message : String(err));
 			});
 

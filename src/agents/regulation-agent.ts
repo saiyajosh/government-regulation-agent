@@ -1,4 +1,5 @@
 'use agent';
+
 import { getCloudflareContext } from '@flue/runtime/cloudflare';
 import { defineTool, setProvider, useDataWriter, useModel, useTool } from '@flue/runtime';
 import { object, optional, picklist, string } from 'valibot';
@@ -8,10 +9,14 @@ import { GATEWAY_MODEL, gatewayProvider } from '../lib/gateway.ts';
 setProvider(gatewayProvider());
 
 function bucket() {
+	// SAFETY: wrangler.jsonc binds DOCUMENTS_BUCKET as an R2 bucket; Flue's
+	// CloudflareContext exposes env as an untyped record.
 	return getCloudflareContext().env.DOCUMENTS_BUCKET as R2Bucket;
 }
 
 function search() {
+	// SAFETY: wrangler.jsonc binds AI_SEARCH to the AI Search instance that
+	// indexes DOCUMENTS_BUCKET; env is the same untyped record as above.
 	return getCloudflareContext().env.AI_SEARCH as AiSearchInstance;
 }
 
@@ -36,6 +41,7 @@ const searchLaws = defineTool({
 			jurisdiction: data.jurisdiction,
 			level: data.level,
 		});
+
 		return {
 			output: results.map((match) => ({
 				key: match.key,
@@ -61,6 +67,7 @@ function openLaw(writeOpenDocument: WriteOpenDocument) {
 		input: object({ key: string() }),
 		async run({ data }) {
 			const doc = await getDocument(bucket(), data.key);
+
 			if (!doc) return { output: { error: `No document found for key "${data.key}".` } };
 
 			writeOpenDocument({ key: doc.key, title: doc.title });
@@ -89,6 +96,7 @@ export function RegulationAgent() {
 	const writeOpenDocument = useDataWriter('openDocument', {
 		schema: object({ key: string(), title: string() }),
 	});
+
 	useTool(searchLaws);
 	useTool(openLaw(writeOpenDocument));
 

@@ -20,6 +20,7 @@ export const GATEWAY_MODEL = 'cloudflare-ai-gateway/claude-sonnet-5';
 
 export function gatewayProvider() {
 	const gatewayAuth = cloudflareAIGatewayAuth();
+
 	return createProvider({
 		id: 'cloudflare-ai-gateway',
 		name: 'Cloudflare AI Gateway (BYOK)',
@@ -29,7 +30,9 @@ export function gatewayProvider() {
 				async resolve(input) {
 					const resolved = await gatewayAuth.resolve(input);
 					const alias = await input.ctx.env('CLOUDFLARE_AI_GATEWAY_BYOK_ALIAS');
+
 					if (!resolved || !alias) return resolved;
+
 					return {
 						...resolved,
 						auth: {
