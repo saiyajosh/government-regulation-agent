@@ -32,12 +32,33 @@ export const LEVELS: Record<string, { label: string; badge: string; surface: str
 	},
 };
 
-export function LevelBadge({ level, className }: { level: string; className?: string }) {
+// The same badge everywhere a level shows up (document header, tool call
+// cards): same label casing and colors, only the size differs.
+export function LevelBadge({
+	level,
+	size = 'md',
+	className,
+}: {
+	level: string;
+	size?: 'sm' | 'md';
+	className?: string;
+}) {
 	const style = LEVELS[level];
 	if (!style) return null;
 	return (
-		<Badge variant="outline" className={cn('h-6 px-2.5 text-[13px]', style.badge, className)}>
+		<Badge
+			variant="outline"
+			className={cn(size === 'md' ? 'h-6 px-2.5 text-[13px]' : 'h-4 px-1.5 text-[10px]', style.badge, className)}
+		>
 			{style.label}
 		</Badge>
 	);
+}
+
+// Federal documents name their jurisdiction "Federal" too, which would put
+// two identical badges side by side; the level badge alone is enough then.
+export function jurisdictionLabel(level: string, jurisdiction: string) {
+	if (!jurisdiction) return null;
+	if (jurisdiction.toLowerCase() === LEVELS[level]?.label.toLowerCase()) return null;
+	return jurisdiction;
 }
