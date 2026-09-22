@@ -98,7 +98,12 @@ function DocumentView({ doc }: { doc: DocumentRecord }) {
 				</div>
 			)}
 			{!error && Content && (
-				<div className="prose prose-neutral dark:prose-invert max-w-none">
+				// Selecting text here enables the explain shortcut (see SelectionExplain).
+				<div
+					data-explain-region="document"
+					data-explain-doc={doc.key}
+					className="prose prose-neutral dark:prose-invert max-w-none"
+				>
 					<Content />
 				</div>
 			)}

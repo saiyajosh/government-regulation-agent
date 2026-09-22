@@ -1,51 +1,11 @@
 'use agent';
-import { createProvider } from '@earendil-works/pi-ai';
-import { anthropicMessagesApi } from '@earendil-works/pi-ai/api/anthropic-messages.lazy';
-import { cloudflareAIGatewayProvider } from '@earendil-works/pi-ai/providers/cloudflare-ai-gateway';
-import { cloudflareAIGatewayAuth } from '@earendil-works/pi-ai/providers/cloudflare-auth';
-import { cloudflareStreams } from '@earendil-works/pi-ai/providers/cloudflare-stream';
 import { getCloudflareContext } from '@flue/runtime/cloudflare';
 import { defineTool, setProvider, useDataWriter, useModel, useTool } from '@flue/runtime';
 import { object, optional, picklist, string } from 'valibot';
 import { getDocument, searchDocuments } from '../lib/documents.ts';
+import { GATEWAY_MODEL, gatewayProvider } from '../lib/gateway.ts';
 
-// Anthropic through Cloudflare AI Gateway with a stored (BYOK) provider key.
-// Pi's built-in gateway provider already does the BYOK dance — it reads
-// CLOUDFLARE_API_KEY / CLOUDFLARE_ACCOUNT_ID / CLOUDFLARE_GATEWAY_ID, sends
-// `cf-aig-authorization`, and strips the Anthropic `x-api-key` header so the
-// gateway injects the stored key. Our key is stored under a non-default alias,
-// which the gateway only honors on direct provider requests when named via
-// `cf-aig-byok-alias`, so re-register the provider with that header added.
-// Registered here rather than in app.ts so `flue run` (which loads only the
-// agent module) picks it up too.
-const gatewayAuth = cloudflareAIGatewayAuth();
-setProvider(
-	createProvider({
-		id: 'cloudflare-ai-gateway',
-		name: 'Cloudflare AI Gateway (BYOK)',
-		auth: {
-			apiKey: {
-				...gatewayAuth,
-				async resolve(input) {
-					const resolved = await gatewayAuth.resolve(input);
-					const alias = await input.ctx.env('CLOUDFLARE_AI_GATEWAY_BYOK_ALIAS');
-					if (!resolved || !alias) return resolved;
-					return {
-						...resolved,
-						auth: {
-							...resolved.auth,
-							headers: { ...resolved.auth.headers, 'cf-aig-byok-alias': alias },
-						},
-					};
-				},
-			},
-		},
-		models: cloudflareAIGatewayProvider()
-			.getModels()
-			.filter((model) => model.api === 'anthropic-messages'),
-		api: cloudflareStreams(anthropicMessagesApi()),
-	}),
-);
+setProvider(gatewayProvider());
 
 function bucket() {
 	return getCloudflareContext().env.DOCUMENTS_BUCKET as R2Bucket;
@@ -123,11 +83,8 @@ function openLaw(writeOpenDocument: WriteOpenDocument) {
 }
 
 export function RegulationAgent() {
-	// Claude Sonnet 5 via the BYOK gateway provider registered above; the
-	// Anthropic key never leaves Cloudflare. Env: CLOUDFLARE_API_KEY (an AI
-	// Gateway token), CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_GATEWAY_ID,
-	// CLOUDFLARE_AI_GATEWAY_BYOK_ALIAS.
-	useModel('cloudflare-ai-gateway/claude-sonnet-5');
+	// Claude Sonnet 5 via the BYOK gateway provider (see src/lib/gateway.ts).
+	useModel(GATEWAY_MODEL);
 
 	const writeOpenDocument = useDataWriter('openDocument', {
 		schema: object({ key: string(), title: string() }),
@@ -145,9 +102,8 @@ export function RegulationAgent() {
 		'mandatory reporting, cap-and-trade, the Low Carbon Fuel Standard, and Advanced Clean Cars);',
 		'and the Bay Area (Bay Area Air Quality Management District rules, and Oakland, San Jose, and',
 		'San Francisco code provisions on climate, building electrification, and vehicles).',
-		'A message may start with "[Scope: Federal]", "[Scope: California]", or "[Scope: Bay Area]":',
-		'then pass the matching level to search_laws (federal; state; regional or municipal with the',
-		'jurisdiction) and answer only from that scope unless the user asks otherwise.',
+		'When a question names a level of government or a place, pass the matching level or',
+		'jurisdiction to search_laws; otherwise search without filters and let relevance decide.',
 		'Always ground factual claims in the document library: search_laws runs a semantic search and',
 		'returns the most relevant passages with their source documents. Rephrase or narrow the query',
 		'if the first pass misses. Then open_law the documents whose passages actually answer the',

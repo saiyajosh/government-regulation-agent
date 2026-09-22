@@ -10,7 +10,10 @@
 	// (`agentName = 'Regulation'` -> FlueRegulationAgent), and Cloudflare
 	// requires a migration entry for each one. Append a new tag when you add an agent:
 	// https://flueframework.com/docs/guide/cloudflare-target/#managing-migrations
-	"migrations": [{ "tag": "v1", "new_sqlite_classes": ["FlueRegulationAgent"] }],
+	"migrations": [
+		{ "tag": "v1", "new_sqlite_classes": ["FlueRegulationAgent"] },
+		{ "tag": "v2", "new_sqlite_classes": ["FlueExplainAgent"] },
+	],
 	// Workers AI binding: lets useModel('cloudflare/...') run keyless, with no
 	// external provider API key required.
 	"ai": { "binding": "AI" },
