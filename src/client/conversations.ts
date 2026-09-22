@@ -12,8 +12,17 @@ export function useConversations() {
 	const [conversations, setConversations] = useState<ConversationRecord[]>([]);
 	const [currentId, setCurrentId] = useState<string | null>(null);
 
+	// Bootstrap outcome. Until 'ready' the agent stays dormant, so a failed
+	// bootstrap has to be surfaced or the chat is silently dead.
+	const [state, setState] = useState<{ status: 'loading' | 'ready' | 'error'; error: string | null }>({
+		status: 'loading',
+		error: null,
+	});
+
 	const refresh = useCallback(async () => {
 		const res = await fetch('/api/conversations');
+
+		if (!res.ok) throw new Error(`Failed to load conversations (${res.status})`);
 		// SAFETY: GET /api/conversations in app.ts responds with
 		// `{ userId, conversations: listConversations(...) }`, whose entries are
 		// the same ConversationRecord entries this hook renders.
@@ -41,6 +50,8 @@ export function useConversations() {
 			}
 
 			const res = await fetch('/api/conversations', { method: 'POST' });
+
+			if (!res.ok) throw new Error(`Failed to create conversation (${res.status})`);
 			// SAFETY: POST /api/conversations in app.ts responds with the single
 			// record from createConversation(...), the same shape as a list entry.
 			const record = (await res.json()) as ConversationRecord;
@@ -52,24 +63,38 @@ export function useConversations() {
 		[refresh],
 	);
 
+	// Rejections here are the Errors thrown above (or a fetch TypeError).
+	const fail = useCallback((error: Error) => {
+		setState({ status: 'error', error: error.message });
+	}, []);
+
+	const boot = useCallback(() => {
+		setState({ status: 'loading', error: null });
+
+		return refresh()
+			.then((data) => {
+				const remembered = readRemembered();
+
+				if (remembered && data.conversations.some((c) => c.id === remembered)) {
+					select(remembered);
+
+					return;
+				}
+
+				return create(data.conversations);
+			})
+			.then(() => setState({ status: 'ready', error: null }))
+			.catch(fail);
+	}, [refresh, create, fail]);
+
 	// Bootstrap once; the ref keeps StrictMode's double effect run from
 	// creating two conversations.
 	const booted = useRef(false);
 	useEffect(() => {
 		if (booted.current) return;
 		booted.current = true;
-		void refresh().then((data) => {
-			const remembered = readRemembered();
-
-			if (remembered && data.conversations.some((c) => c.id === remembered)) {
-				select(remembered);
-
-				return;
-			}
-
-			void create(data.conversations);
-		});
-	}, [refresh, create]);
+		void boot();
+	}, [boot]);
 
 	function select(id: string) {
 		setCurrentId(id);
@@ -94,10 +119,13 @@ export function useConversations() {
 		userId,
 		conversations,
 		currentId,
+		status: state.status,
+		error: state.error,
 		select,
-		create: () => create(),
+		create: () => create().catch(fail),
 		refresh,
 		reportSnippet,
+		retry: boot,
 	};
 }
 

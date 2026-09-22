@@ -116,11 +116,20 @@ export function App() {
 					showResources && 'md:grid-cols-[minmax(320px,1fr)_minmax(400px,1.4fr)]',
 				)}
 			>
-				<ChatPanel
-					key={history.currentId}
-					agent={agent}
-					className={showResources ? 'border-b md:border-r md:border-b-0' : undefined}
-				/>
+				{history.status === 'error' ? (
+					<div className="flex flex-col items-center justify-center gap-3 p-6 text-center text-sm text-muted-foreground">
+						<p>Couldn&apos;t load your conversations. {history.error}</p>
+						<Button variant="outline" size="sm" onClick={() => void history.retry()}>
+							Retry
+						</Button>
+					</div>
+				) : (
+					<ChatPanel
+						key={history.currentId}
+						agent={agent}
+						className={showResources ? 'border-b md:border-r md:border-b-0' : undefined}
+					/>
+				)}
 				{showResources && (
 					<ResourcesPanel
 						openDocs={openDocs}
