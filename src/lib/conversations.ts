@@ -1,5 +1,6 @@
 // Per-user conversation index in KV. One key per conversation, namespaced by
-// user id, so `list({ prefix })` returns everything a user owns in one call.
+// user id, so `list({ prefix })` returns everything a user owns; listing pages
+// through the cursor since KV caps each page at 1000 keys.
 // The list-view fields (title, snippet, timestamps) are duplicated into KV
 // metadata (≤ 1024 bytes) so listing never has to read values. The value is
 // the same record; it exists so a future move to D1 or a Durable Object is a
@@ -35,9 +36,17 @@ export async function createConversation(
 }
 
 export async function listConversations(kv: KVNamespace, userId: string) {
-	const listed = await kv.list<Metadata>({ prefix: key(userId, '') });
+	const keys: KVNamespaceListKey<Metadata>[] = [];
+	let cursor: string | undefined;
 
-	return listed.keys
+	do {
+		const page = await kv.list<Metadata>({ prefix: key(userId, ''), cursor, limit: 1000 });
+
+		keys.push(...page.keys);
+		cursor = page.list_complete ? undefined : page.cursor;
+	} while (cursor);
+
+	return keys
 		.flatMap((entry) => {
 			if (!entry.metadata) return [];
 
