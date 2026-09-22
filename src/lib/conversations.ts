@@ -69,7 +69,9 @@ export async function getConversation(kv: KVNamespace, userId: string, conversat
 }
 
 // Read-modify-write; KV has no conditional writes, which is acceptable here
-// because only the owning user's own requests touch a conversation.
+// because the two writers are disjoint in time: the server stamps the title
+// exactly once, on the first prompt, before any reply can settle, and every
+// later write is the client's snippet report after a reply settles.
 export async function updateConversation(
 	kv: KVNamespace,
 	userId: string,

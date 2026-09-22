@@ -46,9 +46,10 @@ app.use('/agents/:agent/:id/*', async (c, next) => {
 //     -H 'content-type: application/json' \
 //     -d '{"kind":"user","body":"What does the Administrative Procedure Act require?"}'
 //
-// A user prompt also stamps the index: the first message becomes the title,
-// and every message bumps updatedAt. The assistant's snippet arrives later
-// via PATCH /api/conversations/:id once the client sees the reply settle.
+// The first user prompt also stamps the index: it becomes the title and bumps
+// updatedAt. Later prompts write nothing; recency is carried by the client's
+// snippet PATCH to /api/conversations/:id once each reply settles, so the two
+// index writers never overlap in time.
 app.post('/agents/regulation-agent/:id', async (c, next) => {
 	const message = await c.req.raw.clone().json<{ kind?: string; body?: string }>();
 	await next();
@@ -81,14 +82,15 @@ app.post('/api/conversations', async (c) => {
 });
 
 // The client reports the reply snippet for the list view. Only the owner's
-// own requests reach here, so a self-reported snippet is trusted.
+// own requests reach here, so a self-reported snippet is trusted. Only the
+// snippet is accepted: the title is stamped server-side from the first prompt.
 app.patch('/api/conversations/:id', async (c) => {
 	const userId = c.get('userId');
 	const id = c.req.param('id');
 
 	if (!ownsConversation(userId, id)) return c.json({ error: 'forbidden' }, 403);
-	const patch = await c.req.json<{ title?: string; snippet?: string }>();
-	const record = await updateConversation(c.env.CONVERSATIONS, userId, id, patch);
+	const patch = await c.req.json<{ snippet?: string }>();
+	const record = await updateConversation(c.env.CONVERSATIONS, userId, id, { snippet: patch.snippet });
 
 	if (!record) return c.json({ error: 'not found' }, 404);
 
@@ -174,8 +176,8 @@ function seedAuthorized(header: string | undefined, token: string | undefined) {
 async function stampTitle(kv: KVNamespace, userId: string, id: string, body: string) {
 	const current = await getConversation(kv, userId, id);
 
-	if (!current) return;
-	await updateConversation(kv, userId, id, isUntouched(current) ? { title: body } : {});
+	if (!current || !isUntouched(current)) return;
+	await updateConversation(kv, userId, id, { title: body });
 }
 
 export default app;
