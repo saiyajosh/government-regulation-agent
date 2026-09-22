@@ -29,6 +29,7 @@ app.use('/api/*', async (c, next) => {
 // stream reads, aborts, and attachment downloads alike.
 app.use('/agents/:agent/:id/*', async (c, next) => {
 	const userId = await requireUser(c);
+
 	if (!ownsConversation(userId, c.req.param('id'))) return c.json({ error: 'forbidden' }, 403);
 	c.set('userId', userId);
 	await next();
@@ -46,6 +47,7 @@ app.use('/agents/:agent/:id/*', async (c, next) => {
 app.post('/agents/regulation-agent/:id', async (c, next) => {
 	const message = await c.req.raw.clone().json<{ kind?: string; body?: string }>();
 	await next();
+
 	if (c.res.status !== 202 || message.kind !== 'user' || !message.body) return;
 	c.executionCtx.waitUntil(stampTitle(c.env.CONVERSATIONS, c.get('userId'), c.req.param('id'), message.body));
 });
@@ -63,11 +65,13 @@ app.route('/agents/explain', createAgentRouter(ExplainAgent));
 // client needs to mint ids for the explain agent.
 app.get('/api/conversations', async (c) => {
 	const userId = c.get('userId');
+
 	return c.json({ userId, conversations: await listConversations(c.env.CONVERSATIONS, userId) });
 });
 
 app.post('/api/conversations', async (c) => {
 	const userId = c.get('userId');
+
 	return c.json(await createConversation(c.env.CONVERSATIONS, userId, mintConversationId(userId)), 201);
 });
 
@@ -76,10 +80,13 @@ app.post('/api/conversations', async (c) => {
 app.patch('/api/conversations/:id', async (c) => {
 	const userId = c.get('userId');
 	const id = c.req.param('id');
+
 	if (!ownsConversation(userId, id)) return c.json({ error: 'forbidden' }, 403);
 	const patch = await c.req.json<{ title?: string; snippet?: string }>();
 	const record = await updateConversation(c.env.CONVERSATIONS, userId, id, patch);
+
 	if (!record) return c.json({ error: 'not found' }, 404);
+
 	return c.json(record);
 });
 
@@ -161,6 +168,7 @@ function seedAuthorized(header: string | undefined, token: string | undefined) {
 
 async function stampTitle(kv: KVNamespace, userId: string, id: string, body: string) {
 	const current = await getConversation(kv, userId, id);
+
 	if (!current) return;
 	await updateConversation(kv, userId, id, current.title === 'New conversation' ? { title: body } : {});
 }

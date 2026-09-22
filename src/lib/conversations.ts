@@ -15,6 +15,7 @@ export interface ConversationRecord {
 type Metadata = Omit<ConversationRecord, 'id'>;
 
 const TITLE_MAX = 80;
+
 const SNIPPET_MAX = 160;
 
 function key(userId: string, conversationId: string) {
@@ -29,14 +30,17 @@ export async function createConversation(
 	const now = new Date().toISOString();
 	const record = { id: conversationId, title: 'New conversation', snippet: '', createdAt: now, updatedAt: now };
 	await write(kv, userId, record);
+
 	return record;
 }
 
 export async function listConversations(kv: KVNamespace, userId: string) {
 	const listed = await kv.list<Metadata>({ prefix: key(userId, '') });
+
 	return listed.keys
 		.flatMap((entry) => {
 			if (!entry.metadata) return [];
+
 			return [{ id: entry.name.slice(key(userId, '').length), ...entry.metadata }];
 		})
 		.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
@@ -55,14 +59,18 @@ export async function updateConversation(
 	patch: Partial<Pick<ConversationRecord, 'title' | 'snippet'>>,
 ) {
 	const current = await getConversation(kv, userId, conversationId);
+
 	if (!current) return null;
+
 	const record = {
 		...current,
 		title: patch.title === undefined ? current.title : clip(patch.title, TITLE_MAX),
 		snippet: patch.snippet === undefined ? current.snippet : clip(patch.snippet, SNIPPET_MAX),
 		updatedAt: new Date().toISOString(),
 	};
+
 	await write(kv, userId, record);
+
 	return record;
 }
 
@@ -73,10 +81,12 @@ async function write(kv: KVNamespace, userId: string, record: ConversationRecord
 		createdAt: record.createdAt,
 		updatedAt: record.updatedAt,
 	};
+
 	await kv.put(key(userId, record.id), JSON.stringify(record), { metadata });
 }
 
 function clip(text: string, max: number) {
 	const oneLine = text.replace(/\s+/g, ' ').trim();
+
 	return oneLine.length <= max ? oneLine : `${oneLine.slice(0, max - 1).trimEnd()}…`;
 }

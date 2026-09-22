@@ -21,9 +21,13 @@ export function useConversations() {
 
 	const refresh = useCallback(async () => {
 		const res = await fetch('/api/conversations');
+		// SAFETY: GET /api/conversations in app.ts responds with
+		// `{ userId, conversations: listConversations(...) }`, whose entries are
+		// the same summary records this hook renders.
 		const data = (await res.json()) as { userId: string; conversations: ConversationSummary[] };
 		setUserId(data.userId);
 		setConversations(data.conversations);
+
 		return data;
 	}, []);
 
@@ -31,14 +35,20 @@ export function useConversations() {
 	// stacking empties in the list.
 	const create = useCallback(async (existing: ConversationSummary[] = []) => {
 		const empty = existing.find((c) => c.title === 'New conversation' && !c.snippet);
+
 		if (empty) {
 			select(empty.id);
+
 			return empty;
 		}
+
 		const res = await fetch('/api/conversations', { method: 'POST' });
+		// SAFETY: POST /api/conversations in app.ts responds with the single
+		// record from createConversation(...), the same shape as a list entry.
 		const record = (await res.json()) as ConversationSummary;
 		setConversations((all) => [record, ...all]);
 		select(record.id);
+
 		return record;
 	}, []);
 
@@ -50,16 +60,20 @@ export function useConversations() {
 		booted.current = true;
 		void refresh().then((data) => {
 			const remembered = readRemembered();
+
 			if (remembered && data.conversations.some((c) => c.id === remembered)) {
 				select(remembered);
+
 				return;
 			}
+
 			void create(data.conversations);
 		});
 	}, [refresh, create]);
 
 	function select(id: string) {
 		setCurrentId(id);
+
 		try {
 			localStorage.setItem(CURRENT_STORAGE_KEY, id);
 		} catch {
