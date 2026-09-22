@@ -113,9 +113,6 @@ issuingBody: House Committee on Financial Services
 ...
 ```
 
-Drop `--remote` to seed the local dev bucket instead (search still hits the
-deployed AI Search instance, which only sees the remote bucket).
-
 Split large codes at the section or part level: one statute section or one
 CFR part per file keeps every file under the 4 MB limit and gives the agent a
 citable unit to open.

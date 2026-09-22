@@ -17,12 +17,14 @@ export function ExplainPrompt({
 	onCancel: () => void;
 }) {
 	const [question, setQuestion] = useState('');
+
 	return (
 		<form
 			data-explain-prompt
 			className="flex w-80 max-w-full flex-col gap-2 rounded-lg border border-violet-300 bg-violet-50 p-2.5 text-sm shadow-lg shadow-violet-900/10 dark:border-violet-800 dark:bg-violet-950"
 			onSubmit={(event) => {
 				event.preventDefault();
+
 				if (question.trim()) onSubmit(question.trim());
 			}}
 			onKeyDown={(event) => {
@@ -69,7 +71,9 @@ export function ExplainCard({
 	const agent = useFlueAgent({
 		url: useMemo(() => `/agents/explain/${crypto.randomUUID()}`, []),
 	});
+
 	const busy = agent.status === 'submitted' || agent.status === 'streaming';
+
 	const answer = agent.messages
 		.filter((message) => message.role === 'assistant')
 		.flatMap((message) => message.parts)

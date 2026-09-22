@@ -32,32 +32,53 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 const SEED_URL = process.env.SEED_URL ?? 'http://localhost:5173';
+
 const OUT_DIR = path.resolve('seed/documents');
+
 const args = process.argv.slice(2);
+
 const flag = (name: string) => {
 	const index = args.indexOf(`--${name}`);
+
 	return index === -1 ? undefined : (args[index + 1] ?? '');
 };
+
 const UPLOAD = args.includes('--upload');
+
 const FULL = args.includes('--full');
+
 const SKIP_EXISTING = args.includes('--skip-existing');
+
 const LIMIT = Number(flag('limit') ?? (FULL ? 0 : 40)) || Infinity;
+
 const CONCURRENCY = Number(flag('concurrency') ?? 6);
+
 const ONLY = flag('only')?.split(',').filter(Boolean);
+
 const CFR_TITLES = (flag('cfr-titles') ?? '5').split(',').map(Number);
+
 const USC_TITLES = (flag('usc-titles') ?? '5').split(',');
+
 const FR_SINCE = flag('fr-since');
+
 const CA_CODES = (flag('ca-codes') ?? 'GOV').split(',');
+
 const MUNICODE_STATE = flag('municode-state') ?? 'CA';
+
 const MUNICODE_COUNTIES = args.includes('--municode-counties');
+
 const PROFILE = flag('profile');
+
 // Declared before any top-level await so the helpers below can see them.
 const HEADERS = {
 	'User-Agent': 'government-regulation-agent-seed/1.0',
 	Accept: 'application/json, text/xml, text/html, */*',
 };
+
 let cachedEcfrDate: string | undefined;
+
 const SEED_TOKEN = process.env.SEED_TOKEN ?? (await readEnvToken());
+
 if (UPLOAD && !SEED_TOKEN) throw new Error('--upload needs SEED_TOKEN in the environment or .env');
 
 interface Doc {
@@ -66,7 +87,7 @@ interface Doc {
 	title: string;
 	// "Federal", "California", "Miami-Dade County, Florida", "Oakland, California"
 	jurisdiction: string;
-	// federal | state | county | municipal
+	// federal | state | regional | county | municipal
 	level: string;
 	citation: string;
 	sourceUrl: string;
@@ -100,7 +121,7 @@ const PROFILES = {
 			{ title: '42', from: 6291, to: 6317 },
 			{ title: '49', from: 32901, to: 32919 },
 			{ title: '26', list: ['25C', '25D', '30C', '30D', '45L', '45Q', '45U', '45V', '45W', '45X', '45Y', '45Z', '48', '48C', '48E', '179D'] },
-		] as ({ title: string; from: number; to: number } | { title: string; list: string[] })[],
+		],
 		frQueries: [
 			...['"greenhouse gas"', '"carbon dioxide"', 'methane', '"fuel economy"', '"energy conservation standards"'].map((term) => ({ term, type: 'RULE', since: '2020-01-01' })),
 			...['"greenhouse gas"', '"carbon dioxide"', 'methane', '"fuel economy"'].map((term) => ({ term, type: 'PRORULE', since: '2024-01-01' })),
@@ -108,7 +129,7 @@ const PROFILES = {
 		// leginfo branches: AB 32 and successors, CARB and vehicle parts of the
 		// air resources division, the renewables portfolio standard.
 		caPaths: [
-			{ code: 'HSC', match: { division: '25.5.' } as Record<string, string> },
+			{ code: 'HSC', match: { division: '25.5.' } },
 			{ code: 'HSC', match: { division: '26.', part: '1.' } },
 			{ code: 'HSC', match: { division: '26.', part: '2.' } },
 			{ code: 'HSC', match: { division: '26.', part: '5.' } },
@@ -136,14 +157,16 @@ const PROFILES = {
 		},
 	},
 };
+
 const GHG = PROFILE === 'ghg' ? PROFILES.ghg : undefined;
+
 if (PROFILE && !GHG) throw new Error(`Unknown profile "${PROFILE}"`);
 
 // ---------------------------------------------------------------------------
 // Sources
 // ---------------------------------------------------------------------------
 
-const SOURCES: Record<string, (emit: Emit) => Promise<void>> = {
+const SOURCES = {
 	// Code of Federal Regulations via the eCFR versioner API. One request per
 	// part returns every section as a DIV8 element; the hierarchy names the
 	// issuing agency (chapter) and the citation.
@@ -153,27 +176,34 @@ const SOURCES: Record<string, (emit: Emit) => Promise<void>> = {
 			{ title: 5, part: '1201' }, // MSPB Practices and Procedures
 			{ title: 1, part: '51' }, // Incorporation by reference (OFR)
 		];
+
 		const date = await ecfrDate();
 		const wanted = GHG ? GHG.cfrParts : FULL ? undefined : SAMPLE_PARTS;
 		const titles = wanted ? [...new Set(wanted.map((p) => p.title))] : CFR_TITLES;
 		let count = 0;
+
 		for (const title of titles) {
 			const structure = await json<EcfrNode>(
 				`https://www.ecfr.gov/api/versioner/v1/structure/current/title-${title}.json`,
 			);
+
 			const parts = collectWithPath(structure, (n) => n.type === 'part' && !n.reserved).filter(
 				({ node }) => !wanted || wanted.some((p) => p.title === title && p.part === node.identifier),
 			);
+
 			for (const { node: part, path: ancestors } of parts) {
 				if (count >= LIMIT) return;
 				const agency = ancestors.find((n) => n.type === 'chapter')?.label_description ?? '';
+
 				const xml = await text(
 					`https://www.ecfr.gov/api/versioner/v1/full/${date}/title-${title}.xml?part=${part.identifier}`,
 				).catch(() => '');
+
 				for (const match of xml.matchAll(/<DIV8 N="([^"]+)" TYPE="SECTION"[^>]*>([\s\S]*?)<\/DIV8>/g)) {
 					if (count >= LIMIT) return;
 					const [, identifier, inner] = match;
 					const heading = htmlToMarkdown(/<HEAD>([\s\S]*?)<\/HEAD>/.exec(inner)?.[1] ?? identifier);
+
 					if (/\[Reserved\]/i.test(heading)) continue;
 					count += 1;
 					await emit({
@@ -200,9 +230,11 @@ const SOURCES: Record<string, (emit: Emit) => Promise<void>> = {
 		let count = 0;
 		const ranges = GHG?.uscRanges;
 		const titles = ranges ? [...new Set(ranges.map((r) => r.title))] : USC_TITLES;
+
 		for (const title of titles) {
 			const padded = title.padStart(2, '0');
 			const zipPath = new RegExp(`releasepoints/us/pl/\\d+/\\d+/xml_usc${padded}@[\\d-]+\\.zip`).exec(download)?.[0];
+
 			if (!zipPath) throw new Error(`No USLM release found for title ${title}`);
 			const dir = await mkdtemp(path.join(tmpdir(), 'usc-'));
 			const zip = path.join(dir, 'title.zip');
@@ -211,18 +243,23 @@ const SOURCES: Record<string, (emit: Emit) => Promise<void>> = {
 			execFileSync('unzip', ['-o', '-q', zip, '-d', dir]);
 			const xmlFile = (await readdir(dir)).find((f) => f.endsWith('.xml'));
 			const xml = await readFile(path.join(dir, xmlFile!), 'utf8');
+
 			for (const match of xml.matchAll(/<section\b[^>]*identifier="\/us\/usc\/t\w+\/s([^"]+)"[^>]*>([\s\S]*?)<\/section>/g)) {
 				if (count >= LIMIT) return;
 				const [, section, inner] = match;
+
 				if (ranges) {
 					const numeric = Number(/^\d+/.exec(section)?.[0]);
+
 					const inRange = ranges.some(
 						(r) => r.title === title && ('list' in r ? r.list.includes(section) : numeric >= r.from && numeric <= r.to),
 					);
+
 					if (!inRange) continue;
 				} else if (!FULL && !/^55[1-9]/.test(section)) continue;
 				const num = /<num[^>]*>([\s\S]*?)<\/num>/.exec(inner)?.[1] ?? `§ ${section}`;
 				const heading = /<heading[^>]*>([\s\S]*?)<\/heading>/.exec(inner)?.[1] ?? '';
+
 				if (/repealed|reserved|omitted/i.test(heading) && inner.length < 600) continue;
 				count += 1;
 				await emit({
@@ -253,25 +290,37 @@ const SOURCES: Record<string, (emit: Emit) => Promise<void>> = {
 		const queries = GHG?.frQueries ?? [{ term: undefined, type: 'RULE', since: FR_SINCE }];
 		const seen = new Set<string>();
 		let count = 0;
+
 		for (const query of queries) {
 			const first = new URL('https://www.federalregister.gov/api/v1/documents.json');
 			first.searchParams.set('per_page', '100');
 			first.searchParams.append('conditions[type][]', query.type);
 			first.searchParams.set('order', 'newest');
+
 			if (query.term) first.searchParams.set('conditions[term]', query.term);
+
 			if (query.since) first.searchParams.set('conditions[publication_date][gte]', query.since);
+
 			for (const field of fields) first.searchParams.append('fields[]', field);
 			let next: string | undefined = first.toString();
+
 			while (next && count < LIMIT) {
 			const page: { results: FrDoc[]; next_page_url?: string } = await json(next);
 			next = page.next_page_url;
+
 			for (const rule of page.results) {
 				if (count >= LIMIT) return;
+
 				if (seen.has(rule.document_number)) continue;
 				seen.add(rule.document_number);
-				count += 1;
 				const raw = await text(rule.raw_text_url).catch(() => '');
-				if (!raw) continue;
+
+				if (!raw) {
+					console.error(`  ✗ ${rule.document_number}: empty or failed raw text fetch`);
+					continue;
+				}
+
+				count += 1;
 				const pre = /<pre>([\s\S]*?)<\/pre>/.exec(raw)?.[1] ?? raw;
 				const cfr = (rule.cfr_references ?? []).map((r) => `${r.title} CFR ${r.part ?? ''}`.trim()).join(', ');
 				await emit({
@@ -307,6 +356,7 @@ const SOURCES: Record<string, (emit: Emit) => Promise<void>> = {
 	// response. Sample mode covers Government Code chapter 3.5 (the CA APA).
 	async ca(emit) {
 		const base = 'https://leginfo.legislature.ca.gov/faces';
+
 		const codes = GHG
 			? [...new Set(GHG.caPaths.map((p) => p.code))]
 			: !FULL
@@ -314,14 +364,17 @@ const SOURCES: Record<string, (emit: Emit) => Promise<void>> = {
 				: CA_CODES.includes('all')
 					? [...new Set([...(await text(`${base}/codes.xhtml`)).matchAll(/tocCode=([A-Z]+)/g)].map((m) => m[1]))]
 					: CA_CODES;
+
 		let count = 0;
 		const seen = new Set<string>();
+
 		for (const code of codes) {
 			const leaves = GHG
 				? (await Promise.all(GHG.caPaths.filter((p) => p.code === code).map((p) => caLeafPages(base, code, p.match)))).flat()
 				: FULL
 					? await caLeafPages(base, code)
 					: [`${base}/codes_displayText.xhtml?lawCode=GOV&division=3.&title=2.&part=1.&chapter=3.5.`];
+
 			for (const leaf of leaves) {
 				if (count >= LIMIT) return;
 				const page = await text(leaf).catch(() => '');
@@ -330,20 +383,26 @@ const SOURCES: Record<string, (emit: Emit) => Promise<void>> = {
 				// so each section's breadcrumb is the latest heading seen per rank.
 				const [preamble, ...chunks] = page.split(`<h6 style="float:left;"><a href="javascript:submitCodesValues('`);
 				const ranks = new Map<string, string>();
+
 				const noteHeadings = (html: string) => {
 					for (const m of html.matchAll(/<h[1-6][^>]*>\s*<b>\s*([^<]+?)\s*<\/b>/g)) {
 						const heading = decodeEntities(m[1]).replace(/\s*\[[\d.\s-]+\]$/, '').trim();
 						const rank = /^(TITLE|DIVISION|PART|CHAPTER|ARTICLE)\b/.exec(heading)?.[1];
+
 						if (rank) ranks.set(rank, heading);
 					}
 				};
+
 				noteHeadings(preamble);
+
 				for (const chunk of chunks) {
 					if (count >= LIMIT) return;
 					const number = /^([\d.]+?)\.?'/.exec(chunk)?.[1];
-					const bodyHtml = chunk.slice(chunk.indexOf('</h6>') + 5).split('<div align="left">')[0];
+					const bodyStart = chunk.indexOf('</h6>') + 5;
+					const bodyHtml = chunk.slice(bodyStart).split('<div align="left">')[0];
 					const crumbs = ['TITLE', 'DIVISION', 'PART', 'CHAPTER', 'ARTICLE'].flatMap((r) => ranks.get(r) ?? []);
-					noteHeadings(chunk.slice(bodyHtml.length));
+					noteHeadings(chunk.slice(bodyStart + bodyHtml.length));
+
 					if (!number || seen.has(`${code}:${number}`)) continue;
 					seen.add(`${code}:${number}`);
 					count += 1;
@@ -361,6 +420,7 @@ const SOURCES: Record<string, (emit: Emit) => Promise<void>> = {
 				}
 			}
 		}
+
 		// Individually listed sections, fetched one page each.
 		for (const { code, sections } of GHG?.caSections ?? []) {
 			for (const number of sections) {
@@ -368,14 +428,17 @@ const SOURCES: Record<string, (emit: Emit) => Promise<void>> = {
 				const url = `${base}/codes_displaySection.xhtml?lawCode=${code}&sectionNum=${number}.`;
 				const html = await text(url).catch(() => '');
 				const section = /<div id="codeLawSectionNoHead"[^>]*>([\s\S]*?)<\/div>\s*<\/div>/.exec(html)?.[1];
+
 				if (!section) continue;
 				const codeName = decodeEntities(new RegExp(`<b>([^<]+?) - ${code}</b>`).exec(html)?.[1] ?? code);
 				const lines = htmlToMarkdown(section).split('\n');
 				const start = lines.findIndex((line) => line.startsWith(`### ${number}`));
+
 				const crumbs = lines
 					.slice(0, Math.max(start, 0))
 					.filter((line) => /^### (TITLE|DIVISION|PART|CHAPTER|ARTICLE)\b/.test(line))
 					.map((line) => line.slice(4).replace(/\s*\[[\d.\s-]+\]$/, ''));
+
 				seen.add(`${code}:${number}`);
 				count += 1;
 				await emit({
@@ -402,34 +465,44 @@ const SOURCES: Record<string, (emit: Emit) => Promise<void>> = {
 		const base = 'https://www.law.cornell.edu';
 		const pause = () => new Promise((resolve) => setTimeout(resolve, 10_000));
 		let count = 0;
+
 		for (const start of GHG.ccrStarts) {
 			const queue = [start];
 			const seen = new Set<string>();
 			const sections = new Set<string>();
+
 			while (queue.length) {
 				const url = queue.shift()!;
+
 				if (seen.has(url)) continue;
 				seen.add(url);
 				await pause();
 				const page = await text(`${base}${url}`).catch(() => '');
+
 				for (const m of page.matchAll(/href="(\/regulations\/california\/[^"]+)"/g)) {
 					const href = m[1];
+
 					if (/^\/regulations\/california\/\d+-CCR-/.test(href)) sections.add(href);
 					else if (href.startsWith(`${url}/`) && !seen.has(href)) queue.push(href);
 				}
 			}
+
 			for (const href of sections) {
 				if (count >= LIMIT) return;
 				await pause();
 				const page = await text(`${base}${href}`).catch(() => '');
 				const heading = decodeEntities(/<title>([^<]*?)\s*\|/.exec(page)?.[1] ?? href);
 				const [, ccrTitle, section] = /Tit\.\s*(\d+),\s*§\s*([\d.]+)/.exec(heading) ?? [];
+
 				const body = /<div[^>]*class="[^"]*statereg-text[^"]*"[^>]*>([\s\S]*?)<div[^>]*class="[^"]*statereg-notes/.exec(page)?.[1]
 					?? /<div[^>]*class="[^"]*statereg-text[^"]*"[^>]*>([\s\S]*?)<\/div>\s*<\/div>/.exec(page)?.[1];
+
 				if (!ccrTitle || !section || !body) continue;
+
 				const crumbs = [...page.matchAll(/<div id="breadcrumb"[\s\S]*?<\/div>/g)]
 					.flatMap((m) => [...m[0].matchAll(/>([^<]{3,120})<\/a>/g)].map((x) => decodeEntities(x[1]).trim()))
 					.filter((c) => /^(Title|Division|Chapter|Subchapter|Article|Subarticle)\b/i.test(c));
+
 				count += 1;
 				await emit({
 					key: `california/ccr/${ccrTitle}-ccr-${section}.md`,
@@ -454,22 +527,27 @@ const SOURCES: Record<string, (emit: Emit) => Promise<void>> = {
 		const index = await text(`${base}/rules-and-compliance/current-rules`);
 		const pages = [...new Set([...index.matchAll(/href="(\/en\/Rules-and-Compliance\/Rules\/[^"]+)"/g)].map((m) => decodeEntities(m[1]).replace(/\?.*$/, '')))].filter((href) => GHG.baaqmdRules.test(href));
 		let count = 0;
+
 		for (const href of pages) {
 			if (count >= LIMIT) return;
 			const page = await text(`${base}${href}`).catch(() => '');
 			const title = decodeEntities(/<title>([^<]*)<\/title>/.exec(page)?.[1] ?? href).trim();
+
 			// Prefer the adopted rule text over draft and workshop versions.
 			const links = [...page.matchAll(/<a[^>]*href="([^"]*\.pdf[^"]*)"[^>]*>([\s\S]*?)<\/a>/gi)].map((m) => ({
 				href: decodeEntities(m[1]),
 				label: m[2].replace(/<[^>]+>/g, '').trim(),
 			}));
+
 			const pdf = links.find((l) => !/draft|workshop|staff report|appendix/i.test(l.label)) ?? links[0];
+
 			if (!pdf) continue;
 			const rule = /Regulation\s*(\d+)(?:,?\s*Rule\s*(\d+))?/i.exec(title);
 			const citation = rule ? `BAAQMD Reg. ${rule[1]}${rule[2] ? `-${rule[2]}` : ''}` : 'BAAQMD Rule';
 			count += 1;
 			await emit({
-				key: `regional/baaqmd/${citation.toLowerCase().replace(/[^a-z0-9]+/g, '-')}.md`,
+				// The citation regex can miss, so key on the page slug, which is unique.
+				key: `regional/baaqmd/${href.split('/').filter(Boolean).at(-1)!.toLowerCase().replace(/[^a-z0-9]+/g, '-')}.md`,
 				title,
 				jurisdiction: 'Bay Area',
 				level: 'regional',
@@ -489,31 +567,42 @@ const SOURCES: Record<string, (emit: Emit) => Promise<void>> = {
 		if (!GHG) return console.log('  municodeSearch runs only with --profile ghg');
 		const api = 'https://api.municode.com';
 		let count = 0;
+
 		for (const client of GHG.municodeSearch.clients) {
 			const hits = new Map<string, MunicodeHit>();
+
 			for (const term of GHG.municodeSearch.terms) {
 				for (let pageNum = 1; pageNum < 20; pageNum += 1) {
 					const page = await json<{ Hits: MunicodeHit[]; NumberOfHits: number }>(
 						`${api}/search?clientId=${client.id}&searchText=${encodeURIComponent(term)}&pageNum=${pageNum}&pageSize=50&contentTypeId=CODES`,
 					).catch(() => null);
+
 					if (!page?.Hits.length) break;
+
 					for (const hit of page.Hits) hits.set(hit.NodeId, hit);
+
 					if (pageNum * 50 >= page.NumberOfHits) break;
 				}
 			}
+
 			const jobs = new Map<string, number>();
 			const slug = `${client.name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${client.abbr.toLowerCase()}`;
+
 			for (const hit of hits.values()) {
 				if (count >= LIMIT) return;
 				const productId = hit.Product.Id;
+
 				if (!jobs.has(productId)) {
 					const job = await json<{ Id: number }>(`${api}/Jobs/latest/${productId}`).catch(() => null);
 					jobs.set(productId, job?.Id ?? 0);
 				}
+
 				const jobId = jobs.get(productId);
+
 				if (!jobId) continue;
 				const page = await json<{ Docs: MunicodeDoc[] }>(`${api}/CodesContent?jobId=${jobId}&nodeId=${hit.NodeId}&productId=${productId}`).catch(() => null);
 				const section = page?.Docs.find((d) => d.Id === hit.NodeId);
+
 				if (!section || section.Content.length <= 80) continue;
 				const number = /^(?:sec(?:tion)?\.?\s*)?([\dA-Z.-]+?)\.?\s*-\s/i.exec(section.Title)?.[1];
 				const cite = `${client.name} Municipal Code`;
@@ -539,6 +628,7 @@ const SOURCES: Record<string, (emit: Emit) => Promise<void>> = {
 	// depth-first to leaf nodes, whose content call returns section documents.
 	async municode(emit) {
 		const api = 'https://api.municode.com';
+
 		const clients: MunicodeClient[] = FULL
 			? (await json<MunicodeClient[]>(`${api}/Clients/stateabbr?stateAbbr=${MUNICODE_STATE}`)).filter(
 					(c) => MUNICODE_COUNTIES || !/county/i.test(c.ClientName),
@@ -547,39 +637,52 @@ const SOURCES: Record<string, (emit: Emit) => Promise<void>> = {
 					{ ClientID: 11719, ClientName: 'Miami-Dade County', State: { StateName: 'Florida', StateAbbreviation: 'FL' } },
 					{ ClientID: 3637, ClientName: 'Oakland', State: { StateName: 'California', StateAbbreviation: 'CA' } },
 				];
+
 		const perClient = Math.ceil(LIMIT / clients.length);
+
 		for (const client of clients) {
 			const isCounty = /county/i.test(client.ClientName);
 			const jurisdiction = `${client.ClientName}, ${client.State.StateName}`;
 			const slug = `${client.ClientName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}-${client.State.StateAbbreviation.toLowerCase()}`;
 			const cite = `${client.ClientName} ${isCounty ? 'Code' : 'Municipal Code'}`;
 			const content = await json<{ codes: { productId: number; productName: string }[] }>(`${api}/ClientContent/${client.ClientID}`).catch(() => null);
+
 			if (!content) continue;
 			let count = 0;
+
 			for (const product of content.codes) {
 				if (count >= perClient) break;
 				const job = await json<{ Id: number }>(`${api}/Jobs/latest/${product.productId}`).catch(() => null);
+
 				if (!job?.Id) continue;
 				const toc = await json<{ Children: TocNode[] }>(`${api}/codesToc?jobId=${job.Id}&productId=${product.productId}`).catch(() => null);
+
 				if (!toc) continue;
 				const queue = toc.Children.filter((n) => n.HasChildren);
+
 				while (queue.length && count < perClient) {
 					const node = queue.shift()!;
 					const children = await json<TocNode[]>(`${api}/codesToc/children?jobId=${job.Id}&nodeId=${node.Id}&productId=${product.productId}`).catch(() => []);
 					const branches = children.filter((c) => c.HasChildren);
+
 					if (branches.length) {
 						queue.unshift(...branches);
 						continue;
 					}
+
 					const page = await json<{ Docs: MunicodeDoc[] }>(`${api}/CodesContent?jobId=${job.Id}&nodeId=${node.Id}&productId=${product.productId}`).catch(() => null);
+
 					if (!page) continue;
 					// Docs are in reading order with mixed depths, so the ancestry of a
 					// section is the latest title seen at each shallower depth.
 					const ancestors: string[] = [];
+
 					for (const section of page.Docs) {
 						ancestors.length = section.NodeDepth;
 						ancestors[section.NodeDepth - 1] = section.Title;
+
 						if (section.NodeDepth < 3 || section.Content.length <= 80) continue;
+
 						if (count >= perClient) break;
 						count += 1;
 						const number = /^(?:sec(?:tion)?\.?\s*)?([\dA-Z.-]+?)\.?\s*-\s/i.exec(section.Title)?.[1];
@@ -599,19 +702,22 @@ const SOURCES: Record<string, (emit: Emit) => Promise<void>> = {
 			}
 		}
 	},
-};
+} satisfies Record<string, (emit: Emit) => Promise<void>>;
 
 // ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
 const selected = Object.entries(SOURCES).filter(([name]) => !ONLY || ONLY.includes(name));
+
 const totals: Record<string, { written: number; uploaded: number; skipped: number; failed: number }> = {};
+
 for (const [name, run] of selected) {
 	const stats = { written: 0, uploaded: 0, skipped: 0, failed: 0 };
 	totals[name] = stats;
 	console.log(`[${name}] starting`);
 	const inFlight = new Set<Promise<void>>();
+
 	const emit: Emit = async (doc) => {
 		const task = (async () => {
 			const file = path.join(OUT_DIR, doc.key);
@@ -619,11 +725,15 @@ for (const [name, run] of selected) {
 			const pdf = doc.pdfUrl ? Buffer.from(await (await request(doc.pdfUrl)).arrayBuffer()) : null;
 			await writeFile(pdf ? file.replace(/\.md$/, '.pdf') : file, pdf ?? render(doc));
 			stats.written += 1;
+
 			if (!UPLOAD) return;
+
 			if (SKIP_EXISTING && (await fetch(`${SEED_URL}/api/documents/${doc.key}`, { method: 'HEAD' })).ok) {
 				stats.skipped += 1;
+
 				return;
 			}
+
 			const response = await fetch(`${SEED_URL}/api/documents/${doc.key}`, {
 				method: 'PUT',
 				headers: pdf
@@ -641,28 +751,37 @@ for (const [name, run] of selected) {
 					: { authorization: `Bearer ${SEED_TOKEN}`, 'content-type': 'text/markdown' },
 				body: pdf ?? render(doc),
 			});
+
 			if (!response.ok) {
 				stats.failed += 1;
 				console.error(`  ✗ ${doc.key}: ${response.status} ${await response.text()}`);
+
 				return;
 			}
+
 			stats.uploaded += 1;
+
 			if (stats.uploaded % 100 === 0) console.log(`  [${name}] ${stats.uploaded} uploaded`);
-		})().catch((error: unknown) => {
+		})().catch((error) => {
 			// A failed download or upload must not take the whole run down.
 			stats.failed += 1;
 			console.error(`  ✗ ${doc.key}: ${error instanceof Error ? error.message : error}`);
 		});
+
 		inFlight.add(task);
 		task.finally(() => inFlight.delete(task));
+
 		// Back-pressure: hold the source until a slot frees up.
 		if (inFlight.size >= CONCURRENCY) await Promise.race(inFlight);
 	};
-	await run(emit).catch((error: unknown) => console.error(`[${name}] aborted: ${error instanceof Error ? error.message : error}`));
+
+	await run(emit).catch((error) => console.error(`[${name}] aborted: ${error instanceof Error ? error.message : error}`));
 	await Promise.all(inFlight);
 	console.log(`[${name}] done`, stats);
 }
+
 console.table(totals);
+
 console.log(UPLOAD ? '\nNow run: npx wrangler ai-search jobs create government-regulation-agent' : `\nWrote files to ${OUT_DIR}. Re-run with --upload to push them.`);
 
 // ---------------------------------------------------------------------------
@@ -671,6 +790,7 @@ console.log(UPLOAD ? '\nNow run: npx wrangler ai-search jobs create government-r
 
 function render(doc: Doc) {
 	const quote = (value: string) => JSON.stringify(value);
+
 	return [
 		'---',
 		`title: ${quote(doc.title)}`,
@@ -689,6 +809,7 @@ function render(doc: Doc) {
 
 async function readEnvToken() {
 	const env = await readFile('.env', 'utf8').catch(() => '');
+
 	return /^SEED_TOKEN=["']?([^"'\n]+)/m.exec(env)?.[1];
 }
 
@@ -700,25 +821,34 @@ async function caLeafPages(base: string, code: string, match: Record<string, str
 	const qualifies = (url: string, leaf: boolean) =>
 		Object.entries(match).every(([level, value]) => {
 			const actual = new URL(url).searchParams.get(level) ?? '';
+
 			return actual === value || (!leaf && actual === '');
 		});
+
 	const leaves = new Set<string>();
 	const seenBranches = new Set<string>();
 	const queue = [`${base}/codesTOCSelected.xhtml?tocCode=${code}`];
+
 	while (queue.length) {
 		const url = queue.shift()!;
+
 		if (seenBranches.has(url)) continue;
 		seenBranches.add(url);
 		const page = await text(url).catch(() => '');
+
 		for (const m of page.matchAll(/codes_displayexpandedbranch\.xhtml\?[^"']+/g)) {
 			const next = `${base}/${decodeEntities(m[0])}`;
+
 			if (!seenBranches.has(next) && qualifies(next, false)) queue.push(next);
 		}
+
 		for (const m of page.matchAll(/codes_displayText\.xhtml\?[^"']+/g)) {
 			const leaf = `${base}/${decodeEntities(m[0])}`;
+
 			if (qualifies(leaf, true)) leaves.add(leaf);
 		}
 	}
+
 	return [...leaves];
 }
 
@@ -728,28 +858,35 @@ function ascii(value: string) {
 }
 
 function caShort(codeName: string, code: string) {
-	const known: Record<string, string> = { GOV: 'Gov. Code', CIV: 'Civ. Code', PEN: 'Penal Code', BPC: 'Bus. & Prof. Code', CCP: 'Civ. Proc. Code', VEH: 'Veh. Code', HSC: 'Health & Safety Code', LAB: 'Lab. Code', EDC: 'Educ. Code', PRC: 'Pub. Res. Code', WIC: 'Welf. & Inst. Code', RTC: 'Rev. & Tax. Code', PUC: 'Pub. Util. Code', FAM: 'Fam. Code', CORP: 'Corp. Code', ELEC: 'Elec. Code', EVID: 'Evid. Code', FIN: 'Fin. Code', INS: 'Ins. Code', PCC: 'Pub. Cont. Code', UIC: 'Unemp. Ins. Code', WAT: 'Water Code', FGC: 'Fish & Game Code', FAC: 'Food & Agric. Code', HNC: 'Harb. & Nav. Code', MVC: 'Mil. & Vet. Code', PROB: 'Prob. Code', SHC: 'Sts. & Hy. Code', CONS: 'Const.' };
-	return known[code] ?? `${codeName.replace(/ Code$/, '')} Code`;
+	const known = new Map([['GOV', 'Gov. Code'], ['CIV', 'Civ. Code'], ['PEN', 'Penal Code'], ['BPC', 'Bus. & Prof. Code'], ['CCP', 'Civ. Proc. Code'], ['VEH', 'Veh. Code'], ['HSC', 'Health & Safety Code'], ['LAB', 'Lab. Code'], ['EDC', 'Educ. Code'], ['PRC', 'Pub. Res. Code'], ['WIC', 'Welf. & Inst. Code'], ['RTC', 'Rev. & Tax. Code'], ['PUC', 'Pub. Util. Code'], ['FAM', 'Fam. Code'], ['CORP', 'Corp. Code'], ['ELEC', 'Elec. Code'], ['EVID', 'Evid. Code'], ['FIN', 'Fin. Code'], ['INS', 'Ins. Code'], ['PCC', 'Pub. Cont. Code'], ['UIC', 'Unemp. Ins. Code'], ['WAT', 'Water Code'], ['FGC', 'Fish & Game Code'], ['FAC', 'Food & Agric. Code'], ['HNC', 'Harb. & Nav. Code'], ['MVC', 'Mil. & Vet. Code'], ['PROB', 'Prob. Code'], ['SHC', 'Sts. & Hy. Code'], ['CONS', 'Const.']]);
+
+	return known.get(code) ?? `${codeName.replace(/ Code$/, '')} Code`;
 }
 
 async function ecfrDate() {
 	if (cachedEcfrDate) return cachedEcfrDate;
 	const titles = await json<{ titles: { number: number; up_to_date_as_of: string }[] }>('https://www.ecfr.gov/api/versioner/v1/titles.json');
 	cachedEcfrDate = titles.titles.reduce((min, t) => (t.up_to_date_as_of < min ? t.up_to_date_as_of : min), '9999');
+
 	return cachedEcfrDate;
 }
 
 // Retry transient failures with backoff; the sources rate-limit bursts.
 async function request(url: string, attempt = 0): Promise<Response> {
-	const response = await fetch(url, { headers: HEADERS }).catch((error: unknown) => {
+	const response = await fetch(url, { headers: HEADERS }).catch((error) => {
 		if (attempt >= 6) throw error;
+
 		return null;
 	});
+
 	if (response?.ok) return response;
+
 	if (attempt >= 6 || (response && response.status < 500 && response.status !== 429)) {
 		throw new Error(`${response?.status ?? 'network'} ${url}`);
 	}
+
 	await new Promise((resolve) => setTimeout(resolve, 500 * 2 ** attempt));
+
 	return request(url, attempt + 1);
 }
 
@@ -758,6 +895,8 @@ async function text(url: string) {
 }
 
 async function json<T>(url: string): Promise<T> {
+	// SAFETY: each caller names the shape the endpoint documents; the sources
+	// are government APIs whose responses are not validated further.
 	return (await request(url)).json() as Promise<T>;
 }
 
@@ -781,6 +920,7 @@ function htmlToMarkdown(html: string) {
 		.replace(/<\/?(?:p|div|tr|ul|ol|table|blockquote|section|extract|fp|note|cita|xref|subsection|paragraph|subparagraph|clause|chapeau|continuation|content)\b[^>]*>/gi, '\n\n')
 		.replace(/<\/?t[dh]\b[^>]*>/gi, ' ')
 		.replace(/<[^>]+>/g, '');
+
 	return decodeEntities(out)
 		.replace(/\*\s*\*/g, '')
 		.replace(/[ \t]+/g, ' ')
@@ -790,11 +930,12 @@ function htmlToMarkdown(html: string) {
 }
 
 function decodeEntities(value: string) {
-	const named: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ', sect: '§', mdash: '—', ndash: '–', para: '¶', ldquo: '“', rdquo: '”', lsquo: '‘', rsquo: '’' };
+	const named = new Map([['amp', '&'], ['lt', '<'], ['gt', '>'], ['quot', '"'], ['apos', "'"], ['nbsp', ' '], ['sect', '§'], ['mdash', '—'], ['ndash', '–'], ['para', '¶'], ['ldquo', '“'], ['rdquo', '”'], ['lsquo', '‘'], ['rsquo', '’']]);
+
 	return value
 		.replace(/&#x([0-9a-f]+);/gi, (_, hex) => String.fromCodePoint(parseInt(hex, 16)))
 		.replace(/&#(\d+);/g, (_, dec) => String.fromCodePoint(Number(dec)))
-		.replace(/&([a-z]+);/gi, (match, name) => named[name.toLowerCase()] ?? match);
+		.replace(/&([a-z]+);/gi, (match, name) => named.get(name.toLowerCase()) ?? match);
 }
 
 interface EcfrNode {
