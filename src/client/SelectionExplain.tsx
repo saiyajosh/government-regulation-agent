@@ -126,6 +126,9 @@ export function SelectionExplain({
 
 		if (!input) return setPending(null);
 		const host = document.createElement('div');
+		// The host is a flex item in the chat bubble; without min-w-0 it would
+		// grow to the card's content width instead of wrapping inside the bubble.
+		host.className = 'min-w-0 max-w-full';
 		// Not `.after()`: workers-types' HTMLRewriter `Element` shadows the DOM signature.
 		pending.block.insertAdjacentElement('afterend', host);
 		setCards((all) => [...all, { id: crypto.randomUUID(), input, question, host }]);

@@ -1,5 +1,5 @@
 import { useFlueAgent } from '@flue/react';
-import { Loader2, MessageCircleQuestion, X } from 'lucide-react';
+import { ExternalLink, Globe, Loader2, MessageCircleQuestion, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -78,11 +78,21 @@ export function ExplainCard({
 
 	const busy = agent.status === 'submitted' || agent.status === 'streaming';
 
-	const answer = agent.messages
-		.filter((message) => message.role === 'assistant')
-		.flatMap((message) => message.parts)
-		.map((part) => (part.type === 'text' ? part.text : ''))
-		.join('');
+	const parts = agent.messages.filter((message) => message.role === 'assistant').flatMap((message) => message.parts);
+	const answer = parts.map((part) => (part.type === 'text' ? part.text : '')).join('');
+	// Tool parts stream in ahead of the answer: a running search shows its
+	// query, and finished searches contribute their pages to the source list
+	// under the answer (deduplicated by URL across calls).
+	const searches = parts.flatMap((part) => (part.type === 'dynamic-tool' && part.toolName === 'search_web' ? [part] : []));
+	// SAFETY: search_web's input schema is { query } (see src/agents/explain.ts);
+	// dynamic-tool parts carry it untyped, and partial during streaming.
+	const searching = searches.flatMap((part) => (part.state === 'output-available' ? [] : [(part.input as { query?: string } | undefined)?.query ?? '']));
+
+	// SAFETY: search_web's run() returns the WebResult list (see
+	// src/agents/explain.ts); only title and url are read here.
+	const pages = searches.flatMap((part) => (part.state === 'output-available' ? (part.output as { title: string; url: string }[]) : []));
+
+	const sources = [...new Map(pages.map((source) => [source.url, source] as const)).values()];
 
 	// Send exactly once on mount. The ref guards StrictMode's double effect run.
 	const sent = useRef(false);
@@ -95,7 +105,9 @@ export function ExplainCard({
 	return (
 		<aside
 			data-explain-ui
-			className="not-prose my-3 flex flex-col gap-2 rounded-lg border border-violet-200 bg-violet-50/70 p-3 text-sm dark:border-violet-900 dark:bg-violet-950/40"
+			// Nothing in the card may be nowrap: the chat scroll viewport sizes to its
+			// content's min-content width, and one unwrappable line widens the column.
+			className="not-prose my-3 flex w-full min-w-0 flex-col gap-2 rounded-lg border border-violet-200 bg-violet-50/70 p-3 text-sm dark:border-violet-900 dark:bg-violet-950/40"
 		>
 			<div className="flex items-start gap-2">
 				<MessageCircleQuestion className="mt-0.5 size-4 shrink-0 text-violet-600 dark:text-violet-400" />
@@ -113,8 +125,32 @@ export function ExplainCard({
 				</Button>
 			</div>
 			<p className="font-medium">{question}</p>
-			{busy && !answer && <Loader2 className="size-4 animate-spin text-violet-500" />}
-			{answer && <p className="leading-relaxed whitespace-pre-wrap">{answer}</p>}
+			{searching.length > 0 && (
+				<p className="flex items-center gap-1.5 text-xs text-violet-700 dark:text-violet-300">
+					<Globe className="size-3.5 shrink-0" />
+					<span className="break-words">Searching official sources: {searching.at(-1)}</span>
+				</p>
+			)}
+			{busy && !answer && searching.length === 0 && <Loader2 className="size-4 animate-spin text-violet-500" />}
+			{answer && <p className="leading-relaxed break-words whitespace-pre-wrap">{answer}</p>}
+			{sources.length > 0 && (
+				<ul className="flex flex-col gap-1 border-t border-violet-200 pt-2 text-xs dark:border-violet-900">
+					{sources.map((source) => (
+						<li key={source.url} className="flex min-w-0 items-start gap-1.5">
+							<Globe className="mt-0.5 size-3.5 shrink-0 text-violet-500" />
+							<a
+								href={source.url}
+								target="_blank"
+								rel="noreferrer"
+								className="inline text-violet-800 underline-offset-2 hover:underline dark:text-violet-200"
+							>
+								<span className="break-words">{source.title}</span>
+								<ExternalLink className="ml-1 inline size-3 align-[-2px]" />
+							</a>
+						</li>
+					))}
+				</ul>
+			)}
 			{agent.status === 'error' && (
 				<p className="text-destructive">Could not get an answer. Try again.</p>
 			)}
