@@ -25,25 +25,32 @@ export function useConversations() {
 	}, []);
 
 	// An untouched conversation (never prompted) is reused rather than
-	// stacking empties in the list.
-	const create = useCallback(async (existing: ConversationRecord[] = []) => {
-		const empty = existing.find((c) => isUntouched(c));
+	// stacking empties in the list. The server is the source of truth for
+	// untouched-ness: the first prompt stamps the record there before the
+	// local list catches up (it only refreshes once a reply settles), so the
+	// decision is made against a fresh list unless the caller already has one.
+	const create = useCallback(
+		async (existing?: ConversationRecord[]) => {
+			const fresh = existing ?? (await refresh()).conversations;
+			const empty = fresh.find((c) => isUntouched(c));
 
-		if (empty) {
-			select(empty.id);
+			if (empty) {
+				select(empty.id);
 
-			return empty;
-		}
+				return empty;
+			}
 
-		const res = await fetch('/api/conversations', { method: 'POST' });
-		// SAFETY: POST /api/conversations in app.ts responds with the single
-		// record from createConversation(...), the same shape as a list entry.
-		const record = (await res.json()) as ConversationRecord;
-		setConversations((all) => [record, ...all]);
-		select(record.id);
+			const res = await fetch('/api/conversations', { method: 'POST' });
+			// SAFETY: POST /api/conversations in app.ts responds with the single
+			// record from createConversation(...), the same shape as a list entry.
+			const record = (await res.json()) as ConversationRecord;
+			setConversations((all) => [record, ...all]);
+			select(record.id);
 
-		return record;
-	}, []);
+			return record;
+		},
+		[refresh],
+	);
 
 	// Bootstrap once; the ref keeps StrictMode's double effect run from
 	// creating two conversations.
@@ -88,7 +95,7 @@ export function useConversations() {
 		conversations,
 		currentId,
 		select,
-		create: () => create(conversations),
+		create: () => create(),
 		refresh,
 		reportSnippet,
 	};
