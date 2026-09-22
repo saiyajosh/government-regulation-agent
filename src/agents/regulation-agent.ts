@@ -15,6 +15,8 @@ function bucket() {
 }
 
 function search() {
+	// SAFETY: wrangler.jsonc binds AI_SEARCH to the AI Search instance that
+	// indexes DOCUMENTS_BUCKET; env is the same untyped record as above.
 	return getCloudflareContext().env.AI_SEARCH as AiSearchInstance;
 }
 
@@ -39,6 +41,7 @@ const searchLaws = defineTool({
 			jurisdiction: data.jurisdiction,
 			level: data.level,
 		});
+
 		return {
 			output: results.map((match) => ({
 				key: match.key,
