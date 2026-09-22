@@ -5,6 +5,7 @@ import { RegulationAgent } from './agents/regulation-agent.ts';
 import {
 	createConversation,
 	getConversation,
+	isUntouched,
 	listConversations,
 	updateConversation,
 } from './lib/conversations.ts';
@@ -174,7 +175,7 @@ async function stampTitle(kv: KVNamespace, userId: string, id: string, body: str
 	const current = await getConversation(kv, userId, id);
 
 	if (!current) return;
-	await updateConversation(kv, userId, id, current.title === 'New conversation' ? { title: body } : {});
+	await updateConversation(kv, userId, id, isUntouched(current) ? { title: body } : {});
 }
 
 export default app;

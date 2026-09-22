@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { isUntouched } from '../lib/conversations.ts';
 
 export interface ConversationSummary {
 	id: string;
@@ -34,7 +35,7 @@ export function useConversations() {
 	// An untouched conversation (never prompted) is reused rather than
 	// stacking empties in the list.
 	const create = useCallback(async (existing: ConversationSummary[] = []) => {
-		const empty = existing.find((c) => c.title === 'New conversation' && !c.snippet);
+		const empty = existing.find((c) => isUntouched(c));
 
 		if (empty) {
 			select(empty.id);
