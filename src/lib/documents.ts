@@ -36,6 +36,7 @@ interface Frontmatter {
 // frontmatter block up front (title, jurisdiction, citation, sourceUrl).
 function parseFrontmatter(raw: string) {
 	const match = /^---\n([\s\S]*?)\n---\n?([\s\S]*)$/.exec(raw);
+
 	const meta: Frontmatter = {
 		title: '',
 		jurisdiction: '',
@@ -45,6 +46,7 @@ function parseFrontmatter(raw: string) {
 		authors: '',
 		issuingBody: '',
 	};
+
 	if (!match) return { meta, body: raw };
 
 	for (const line of match[1].split('\n')) {
@@ -84,6 +86,7 @@ export async function getDocument(bucket: R2Bucket, key: string): Promise<Docume
 // quoted so titles with colons or quotes round-trip through parseFrontmatter.
 export function renderFrontmatter(meta: Omit<DocumentSummary, 'key'>) {
 	const quote = (value: string) => JSON.stringify(value);
+
 	return [
 		'---',
 		`title: ${quote(meta.title)}`,
@@ -103,12 +106,14 @@ export function renderFrontmatter(meta: Omit<DocumentSummary, 'key'>) {
 // Metadata must be ASCII, so section signs and dashes are normalized.
 export async function putDocument(bucket: R2Bucket, key: string, raw: string): Promise<DocumentRecord> {
 	const { meta } = parseFrontmatter(raw);
+
 	const ascii = (value: string) =>
 		value
 			.replace(/§/g, 'Sec.')
 			.replace(/[—–]/g, '-')
 			.replace(/[^\x20-\x7e]/g, '')
 			.trim();
+
 	await bucket.put(key, raw, {
 		httpMetadata: { contentType: 'text/markdown' },
 		customMetadata: {
@@ -119,6 +124,7 @@ export async function putDocument(bucket: R2Bucket, key: string, raw: string): P
 			issuing_body: ascii(meta.issuingBody),
 		},
 	});
+
 	return (await getDocument(bucket, key))!;
 }
 
@@ -135,10 +141,12 @@ export async function searchDocuments(
 	options: { jurisdiction?: string; level?: string; maxResults?: number } = {},
 ): Promise<DocumentMatch[]> {
 	if (!query.trim()) return [];
+
 	const filters = {
 		...(options.jurisdiction && { jurisdiction: options.jurisdiction }),
 		...(options.level && { level: options.level }),
 	};
+
 	const results = await search.search({
 		query,
 		ai_search_options: {
@@ -161,10 +169,12 @@ export async function searchDocuments(
 	});
 
 	const byKey = new Map<string, { text: string; score: number }[]>();
+
 	for (const chunk of results.chunks) {
 		const excerpts = byKey.get(chunk.item.key) ?? [];
 		// The first chunk of a file includes its frontmatter; drop it from the excerpt.
 		const text = chunk.text.replace(/^---\n[\s\S]*?\n---\n?/, '').trim();
+
 		if (text) excerpts.push({ text, score: chunk.score });
 		byKey.set(chunk.item.key, excerpts);
 	}
@@ -172,7 +182,9 @@ export async function searchDocuments(
 	const matches = await Promise.all(
 		[...byKey].map(async ([key, excerpts]) => {
 			const doc = await getDocument(bucket, key);
+
 			if (!doc) return null;
+
 			return {
 				key,
 				title: doc.title,
@@ -186,6 +198,7 @@ export async function searchDocuments(
 			};
 		}),
 	);
+
 	// Chunks arrive ranked, so documents keep the order of their best chunk.
 	return matches.filter((match): match is DocumentMatch => match !== null);
 }
