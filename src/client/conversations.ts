@@ -106,13 +106,23 @@ export function useConversations() {
 		}
 	}
 
+	// The snippet is cosmetic, so a failed PATCH is left alone rather than
+	// surfaced. The response is applied locally instead of refetching the list:
+	// KV list reads are eventually consistent and can miss the write briefly.
 	async function reportSnippet(id: string, snippet: string) {
-		await fetch(`/api/conversations/${id}`, {
+		const res = await fetch(`/api/conversations/${id}`, {
 			method: 'PATCH',
 			headers: { 'content-type': 'application/json' },
 			body: JSON.stringify({ snippet }),
 		});
-		await refresh();
+
+		if (!res.ok) return;
+		// SAFETY: PATCH /api/conversations/:id in app.ts responds with the
+		// updated record from updateConversation(...), the same shape as a list entry.
+		const record = (await res.json()) as ConversationRecord;
+		setConversations((all) =>
+			[record, ...all.filter((c) => c.id !== record.id)].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
+		);
 	}
 
 	return {
