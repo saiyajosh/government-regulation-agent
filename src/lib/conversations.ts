@@ -13,7 +13,15 @@ export interface ConversationRecord {
 	updatedAt: string;
 }
 
-type Metadata = Omit<ConversationRecord, 'id'>;
+export type Metadata = Omit<ConversationRecord, 'id'>;
+
+// The slice of KVNamespace this module uses, declared structurally so the
+// Worker binding satisfies it and tests can pass an in-memory fake.
+export interface ConversationIndex {
+	get<T>(key: string, type: 'json'): Promise<T | null>;
+	put(key: string, value: string, options: { metadata: Metadata }): Promise<void>;
+	list<M>(options: { prefix: string; cursor?: string; limit: number }): Promise<KVNamespaceListResult<M>>;
+}
 
 export const DEFAULT_TITLE = 'New conversation';
 
@@ -33,7 +41,7 @@ function key(userId: string, conversationId: string) {
 }
 
 export async function createConversation(
-	kv: KVNamespace,
+	kv: ConversationIndex,
 	userId: string,
 	conversationId: string,
 ): Promise<ConversationRecord> {
@@ -44,7 +52,7 @@ export async function createConversation(
 	return record;
 }
 
-export async function listConversations(kv: KVNamespace, userId: string) {
+export async function listConversations(kv: ConversationIndex, userId: string) {
 	const keys: KVNamespaceListKey<Metadata>[] = [];
 	let cursor: string | undefined;
 
@@ -64,7 +72,7 @@ export async function listConversations(kv: KVNamespace, userId: string) {
 		.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
 
-export async function getConversation(kv: KVNamespace, userId: string, conversationId: string) {
+export async function getConversation(kv: ConversationIndex, userId: string, conversationId: string) {
 	return kv.get<ConversationRecord>(key(userId, conversationId), 'json');
 }
 
@@ -73,7 +81,7 @@ export async function getConversation(kv: KVNamespace, userId: string, conversat
 // exactly once, on the first prompt, before any reply can settle, and every
 // later write is the client's snippet report after a reply settles.
 export async function updateConversation(
-	kv: KVNamespace,
+	kv: ConversationIndex,
 	userId: string,
 	conversationId: string,
 	patch: Partial<Pick<ConversationRecord, 'title' | 'snippet'>>,
@@ -94,7 +102,7 @@ export async function updateConversation(
 	return record;
 }
 
-async function write(kv: KVNamespace, userId: string, record: ConversationRecord) {
+async function write(kv: ConversationIndex, userId: string, record: ConversationRecord) {
 	const metadata: Metadata = {
 		title: record.title,
 		snippet: record.snippet,
