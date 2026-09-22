@@ -121,9 +121,8 @@ type ToolPart = Extract<
 // appears while the call is still running.
 function ToolCall({ part }: { part: ToolPart }) {
 	const done = part.state === 'output-available';
-	const input = (part.input ?? {}) as Record<string, unknown>;
-	const output = done ? (part.output as Record<string, unknown> | unknown[]) : null;
-	const detail = describe(part.toolName, input, output);
+	const detail = describe(part);
+
 	return (
 		<div className="flex w-fit max-w-full items-start gap-2 rounded-lg border bg-background/60 px-2.5 py-1.5 text-xs">
 			<span className="mt-0.5 shrink-0 text-muted-foreground">
@@ -145,38 +144,58 @@ function ToolCall({ part }: { part: ToolPart }) {
 	);
 }
 
-function describe(name: string, input: Record<string, unknown>, output: Record<string, unknown> | unknown[] | null) {
-	const str = (value: unknown) => (typeof value === 'string' ? value : '');
-	if (name === 'search_laws') {
-		const count = Array.isArray(output) ? output.length : null;
+// Dynamic-tool parts carry input and output untyped; each branch narrows
+// them to the schema the matching tool declares in regulation-agent.ts.
+function describe(part: ToolPart) {
+	const done = part.state === 'output-available';
+	const plural = (n: number, noun: string) => `${n} ${noun}${n === 1 ? '' : 's'}`;
+
+	if (part.toolName === 'search_laws') {
+		// SAFETY: search_laws' input schema is { query, level?, jurisdiction? } and
+		// its run() returns the DocumentMatch list.
+		const input = part.input as { query?: string; level?: string; jurisdiction?: string } | undefined;
+		// SAFETY: see above; only the list length is read here.
+		const count = done ? (part.output as unknown[]).length : null;
+
 		return {
 			Icon: Search,
-			label: output === null ? 'Searching the library' : count === 0 ? 'No matching documents' : `Found ${count} document${count === 1 ? '' : 's'}`,
-			level: str(input.level),
-			chips: [jurisdictionLabel(str(input.level), str(input.jurisdiction))].filter((chip) => chip !== null),
-			body: str(input.query),
+			label: count === null ? 'Searching the library' : count === 0 ? 'No matching documents' : `Found ${plural(count, 'document')}`,
+			level: input?.level ?? '',
+			chips: [jurisdictionLabel(input?.level ?? '', input?.jurisdiction ?? '')].filter((chip) => chip !== null),
+			body: input?.query ?? '',
 		};
 	}
-	if (name === 'open_law') {
-		const title = output && !Array.isArray(output) ? str(output.title) : '';
-		const passages = Array.isArray(input.passages) ? input.passages.length : 0;
+
+	if (part.toolName === 'open_law') {
+		// SAFETY: open_law's input schema is { key, passages? } and its run()
+		// returns either the DocumentRecord it loaded or { error }.
+		const input = part.input as { key?: string; passages?: string[] } | undefined;
+		// SAFETY: see above; both shapes are covered by these optional fields.
+		const output = done ? (part.output as { title?: string; level?: string; error?: string }) : null;
+		const passages = input?.passages?.length ?? 0;
+
 		return {
 			Icon: BookOpenText,
-			label: output === null ? 'Opening document' : title ? `Opened ${title}` : 'Could not open document',
-			level: output && !Array.isArray(output) ? str(output.level) : '',
-			chips: passages > 0 ? [`${passages} passage${passages === 1 ? '' : 's'} marked`] : [],
-			body: title ? '' : str(input.key),
+			label: output === null ? 'Opening document' : output.title ? `Opened ${output.title}` : 'Could not open document',
+			level: output?.level ?? '',
+			chips: passages > 0 ? [`${plural(passages, 'passage')} marked`] : [],
+			body: output?.title ? '' : (input?.key ?? ''),
 		};
 	}
-	if (name === 'highlight_passages') {
-		const passages = Array.isArray(input.passages) ? (input.passages as unknown[]) : [];
+
+	if (part.toolName === 'highlight_passages') {
+		// SAFETY: highlight_passages' input schema is { key, passages }.
+		const input = part.input as { passages?: string[] } | undefined;
+		const passages = input?.passages ?? [];
+
 		return {
 			Icon: Highlighter,
-			label: `Marking ${passages.length} passage${passages.length === 1 ? '' : 's'}`,
+			label: `Marking ${plural(passages.length, 'passage')}`,
 			level: '',
 			chips: [],
-			body: str(passages[0]),
+			body: passages[0] ?? '',
 		};
 	}
-	return { Icon: Wrench, label: name, level: '', chips: [], body: '' };
+
+	return { Icon: Wrench, label: part.toolName, level: '', chips: [], body: '' };
 }

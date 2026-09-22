@@ -81,11 +81,13 @@ function DocumentView({ doc, passages }: { doc: DocumentRecord; passages: Passag
 	// mounted at a time, so the page-wide highlight registry is ours to reset.
 	useEffect(() => {
 		const root = proseRef.current;
+
 		if (!root || !Content) return;
 		const result = applyHighlights(root, passages);
 		setCited(result.anchors);
 		setRetrieved(result.matched.retrieved);
 		setCursor(-1);
+
 		return clearHighlights;
 	}, [Content, passages]);
 
@@ -99,6 +101,7 @@ function DocumentView({ doc, passages }: { doc: DocumentRecord; passages: Passag
 
 	function jumpTo(index: number) {
 		const range = cited[index];
+
 		if (!range) return;
 		setCursor(index);
 		const node = range.startContainer;
