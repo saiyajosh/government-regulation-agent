@@ -36,7 +36,7 @@ export function LevelBadge({ level, className }: { level: string; className?: st
 	const style = LEVELS[level];
 	if (!style) return null;
 	return (
-		<Badge variant="outline" className={cn(style.badge, className)}>
+		<Badge variant="outline" className={cn('h-6 px-2.5 text-[13px]', style.badge, className)}>
 			{style.label}
 		</Badge>
 	);

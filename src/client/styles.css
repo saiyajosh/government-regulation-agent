@@ -132,3 +132,19 @@
     @apply font-sans;
     }
 }
+/* Passage highlights (see src/client/highlights.ts). Cited quotes read as a
+   marker pen; retrieved search chunks are a fainter wash underneath. */
+::highlight(cited-passage) {
+	background-color: color-mix(in oklab, var(--color-amber-300) 55%, transparent);
+	color: inherit;
+}
+::highlight(retrieved-passage) {
+	background-color: color-mix(in oklab, var(--color-emerald-200) 40%, transparent);
+	color: inherit;
+}
+.dark ::highlight(cited-passage) {
+	background-color: color-mix(in oklab, var(--color-amber-500) 35%, transparent);
+}
+.dark ::highlight(retrieved-passage) {
+	background-color: color-mix(in oklab, var(--color-emerald-500) 20%, transparent);
+}
