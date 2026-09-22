@@ -80,22 +80,34 @@ export function App() {
 	// their tool parts too, so a reopened conversation keeps its highlights.
 	const passages = useMemo(() => {
 		const byKey: Record<string, Passage[]> = {};
+
 		const add = (key: string, kind: Passage['kind'], texts: string[]) => {
 			byKey[key] = [...(byKey[key] ?? []), ...texts.map((text) => ({ text, kind }))];
 		};
+
 		for (const message of agent.messages) {
 			for (const part of message.parts) {
 				if (part.type !== 'dynamic-tool' || part.state !== 'output-available') continue;
+
 				if (part.toolName === 'search_laws') {
+					// SAFETY: search_laws' run() in regulation-agent.ts returns the
+					// DocumentMatch list, whose excerpts are { text, score }; dynamic-tool
+					// parts carry that output untyped.
 					const matches = part.output as { key: string; excerpts: { text: string }[] }[];
+
 					for (const match of matches) add(match.key, 'retrieved', match.excerpts.map((e) => e.text));
 				}
+
 				if (part.toolName === 'open_law' || part.toolName === 'highlight_passages') {
+					// SAFETY: both tools' input schemas in regulation-agent.ts are
+					// { key, passages? }; dynamic-tool parts carry the input untyped.
 					const input = part.input as { key: string; passages?: string[] };
+
 					if (input.passages?.length) add(input.key, 'cited', input.passages);
 				}
 			}
 		}
+
 		return byKey;
 	}, [agent.messages]);
 

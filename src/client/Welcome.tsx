@@ -120,7 +120,7 @@ export function Welcome({ onPrompt, disabled }: { onPrompt: (text: string) => vo
 							key={scope.title}
 							className={cn(
 								'flex flex-col gap-2 rounded-xl border p-4 shadow-xs transition-colors',
-								LEVELS[scope.level].surface,
+								LEVELS.get(scope.level)?.surface,
 							)}
 						>
 							<div className="flex items-center gap-2">
