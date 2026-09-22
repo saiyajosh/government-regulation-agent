@@ -17,6 +17,17 @@
 	// Workers AI binding: lets useModel('cloudflare/...') run keyless, with no
 	// external provider API key required.
 	"ai": { "binding": "AI" },
+	// AI Search instance (managed RAG over DOCUMENTS_BUCKET): chunks, embeds, and
+	// re-indexes the bucket on a schedule; search_laws queries it. Create it once:
+	//   wrangler ai-search create government-regulation-agent --type r2 --source government-regulation-agent
+	// `remote` proxies dev traffic to the deployed instance; AI Search has no local mode.
+	"ai_search": [
+		{
+			"binding": "AI_SEARCH",
+			"instance_name": "government-regulation-agent",
+			"remote": true,
+		},
+	],
 	// Non-secret config for the BYOK Claude route through AI Gateway (see
 	// src/agents/regulation-agent.ts). The gateway token itself is a secret:
 	//   wrangler secret put CLOUDFLARE_API_KEY
@@ -27,10 +38,14 @@
 	},
 	// Application-owned resources only; Flue's own FLUE_* bindings are
 	// generated automatically and merged in at build time.
+	// `remote` makes local dev read and write the real bucket, because the AI
+	// Search index only ever sees the remote bucket and search results must
+	// resolve to documents that exist.
 	"r2_buckets": [
 		{
 			"binding": "DOCUMENTS_BUCKET",
 			"bucket_name": "government-regulation-agent",
+			"remote": true,
 		},
 	],
 	// The Vite client build (chat + Resources UI) is served as static assets;

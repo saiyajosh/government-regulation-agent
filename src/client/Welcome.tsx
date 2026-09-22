@@ -5,7 +5,7 @@ const CAPABILITIES = [
 	{
 		icon: Search,
 		title: 'Search a sourced library',
-		body: 'Federal, state, county, and municipal acts, statutes, and regulations.',
+		body: 'Greenhouse gas statutes, regulations, and rules at the federal, California, and Bay Area levels.',
 	},
 	{
 		icon: Quote,
@@ -50,10 +50,12 @@ const EXPLAIN_STEPS = [
 ];
 
 const PROMPTS = [
-	'What does the Administrative Procedure Act require of agencies?',
-	'How is “navigable waters” defined under the Clean Water Act?',
-	'What notice must a landlord give before entering a unit in California?',
-	'Which permits does a food truck need to operate in Austin?',
+	'Which facilities must report under the EPA Greenhouse Gas Reporting Program?',
+	'What methane limits apply to existing oil and gas wells?',
+	'What does AB 32 require the California Air Resources Board to do?',
+	'Who must hold compliance instruments under California cap-and-trade?',
+	'What does BAAQMD require after a significant methane release?',
+	'Does San Jose prohibit natural gas in new buildings?',
 ];
 
 export function Welcome({ onPrompt, disabled }: { onPrompt: (text: string) => void; disabled?: boolean }) {
@@ -70,11 +72,11 @@ export function Welcome({ onPrompt, disabled }: { onPrompt: (text: string) => vo
 				</div>
 				<div className="flex flex-col gap-2">
 					<h2 className="font-heading text-2xl font-semibold tracking-tight text-balance sm:text-3xl">
-						Understand the law, from the source
+						Understand greenhouse gas regulation, from the source
 					</h2>
 					<p className="mx-auto max-w-md text-sm text-muted-foreground text-balance sm:text-base">
-						A research assistant for United States law that answers only from a library of
-						sourced legal documents and shows you the text it used.
+						A research assistant for federal, California, and Bay Area climate rules that
+						answers only from a library of official documents and shows you the text it used.
 					</p>
 				</div>
 			</section>

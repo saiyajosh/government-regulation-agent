@@ -74,6 +74,7 @@ function DocumentView({ doc }: { doc: DocumentRecord }) {
 				<div className="flex flex-wrap items-center gap-1.5">
 					<Badge variant="secondary">{doc.jurisdiction}</Badge>
 					{doc.citation && <Badge variant="outline">{doc.citation}</Badge>}
+					{doc.issuingBody && <Badge variant="outline">{doc.issuingBody}</Badge>}
 					{doc.sourceUrl && (
 						<Button variant="link" size="sm" className="h-auto px-1" asChild>
 							<a href={doc.sourceUrl} target="_blank" rel="noreferrer">
@@ -83,6 +84,9 @@ function DocumentView({ doc }: { doc: DocumentRecord }) {
 						</Button>
 					)}
 				</div>
+				{doc.authors && (
+					<p className="text-sm text-muted-foreground">Authors: {doc.authors}</p>
+				)}
 			</header>
 			<Separator className="my-5" />
 			{error && <p className="text-sm text-destructive">Could not render document: {error}</p>}
