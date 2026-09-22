@@ -87,7 +87,7 @@ interface Doc {
 	title: string;
 	// "Federal", "California", "Miami-Dade County, Florida", "Oakland, California"
 	jurisdiction: string;
-	// federal | state | county | municipal
+	// federal | state | regional | county | municipal
 	level: string;
 	citation: string;
 	sourceUrl: string;
