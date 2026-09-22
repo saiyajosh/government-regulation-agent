@@ -1,6 +1,6 @@
 import { useFlueAgent } from '@flue/react';
-import { useEffect, useRef, useState } from 'react';
-import { History, Landmark, SquarePen } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { History, SquarePen } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { ChatPanel } from './ChatPanel.tsx';
@@ -8,6 +8,7 @@ import { ConversationsDrawer } from './ConversationsDrawer.tsx';
 import { useConversations } from './conversations.ts';
 import { ResourcesPanel } from './ResourcesPanel.tsx';
 import { SelectionExplain } from './SelectionExplain.tsx';
+import type { Passage } from './highlights.ts';
 import type { DocumentRecord } from './types.ts';
 
 export function App() {
@@ -73,6 +74,43 @@ export function App() {
 		}
 	}, [agent.messages]);
 
+	// Passages to highlight, per document key, gathered from the same tool
+	// parts: search_laws excerpts are "retrieved", and quotes the agent names
+	// in open_law or highlight_passages are "cited". Replayed messages carry
+	// their tool parts too, so a reopened conversation keeps its highlights.
+	const passages = useMemo(() => {
+		const byKey: Record<string, Passage[]> = {};
+
+		const add = (key: string, kind: Passage['kind'], texts: string[]) => {
+			byKey[key] = [...(byKey[key] ?? []), ...texts.map((text) => ({ text, kind }))];
+		};
+
+		for (const message of agent.messages) {
+			for (const part of message.parts) {
+				if (part.type !== 'dynamic-tool' || part.state !== 'output-available') continue;
+
+				if (part.toolName === 'search_laws') {
+					// SAFETY: search_laws' run() in regulation-agent.ts returns the
+					// DocumentMatch list, whose excerpts are { text, score }; dynamic-tool
+					// parts carry that output untyped.
+					const matches = part.output as { key: string; excerpts: { text: string }[] }[];
+
+					for (const match of matches) add(match.key, 'retrieved', match.excerpts.map((e) => e.text));
+				}
+
+				if (part.toolName === 'open_law' || part.toolName === 'highlight_passages') {
+					// SAFETY: both tools' input schemas in regulation-agent.ts are
+					// { key, passages? }; dynamic-tool parts carry the input untyped.
+					const input = part.input as { key: string; passages?: string[] };
+
+					if (input.passages?.length) add(input.key, 'cited', input.passages);
+				}
+			}
+		}
+
+		return byKey;
+	}, [agent.messages]);
+
 	const showResources = openDocs.length > 0;
 
 	return (
@@ -87,9 +125,11 @@ export function App() {
 				>
 					<History className="size-4" />
 				</Button>
-				<Landmark className="size-4 text-muted-foreground" />
+				<span aria-hidden className="text-base leading-none">
+					🌱
+				</span>
 				<h1 className="flex-1 font-heading text-sm font-semibold tracking-tight">
-					Government Regulation Agent
+					Greenhouse Guide
 				</h1>
 				<Button variant="ghost" size="sm" onClick={() => void history.create()}>
 					<SquarePen data-icon="inline-start" />
@@ -133,6 +173,7 @@ export function App() {
 				{showResources && (
 					<ResourcesPanel
 						openDocs={openDocs}
+						passages={passages}
 						activeKey={activeKey ?? openDocs[0].key}
 						onSelect={setActiveKey}
 						onClose={(key) =>
