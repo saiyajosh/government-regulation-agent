@@ -313,10 +313,14 @@ const SOURCES = {
 
 				if (seen.has(rule.document_number)) continue;
 				seen.add(rule.document_number);
-				count += 1;
 				const raw = await text(rule.raw_text_url).catch(() => '');
 
-				if (!raw) continue;
+				if (!raw) {
+					console.error(`  ✗ ${rule.document_number}: empty or failed raw text fetch`);
+					continue;
+				}
+
+				count += 1;
 				const pre = /<pre>([\s\S]*?)<\/pre>/.exec(raw)?.[1] ?? raw;
 				const cfr = (rule.cfr_references ?? []).map((r) => `${r.title} CFR ${r.part ?? ''}`.trim()).join(', ');
 				await emit({
@@ -394,9 +398,10 @@ const SOURCES = {
 				for (const chunk of chunks) {
 					if (count >= LIMIT) return;
 					const number = /^([\d.]+?)\.?'/.exec(chunk)?.[1];
-					const bodyHtml = chunk.slice(chunk.indexOf('</h6>') + 5).split('<div align="left">')[0];
+					const bodyStart = chunk.indexOf('</h6>') + 5;
+					const bodyHtml = chunk.slice(bodyStart).split('<div align="left">')[0];
 					const crumbs = ['TITLE', 'DIVISION', 'PART', 'CHAPTER', 'ARTICLE'].flatMap((r) => ranks.get(r) ?? []);
-					noteHeadings(chunk.slice(bodyHtml.length));
+					noteHeadings(chunk.slice(bodyStart + bodyHtml.length));
 
 					if (!number || seen.has(`${code}:${number}`)) continue;
 					seen.add(`${code}:${number}`);
@@ -541,7 +546,8 @@ const SOURCES = {
 			const citation = rule ? `BAAQMD Reg. ${rule[1]}${rule[2] ? `-${rule[2]}` : ''}` : 'BAAQMD Rule';
 			count += 1;
 			await emit({
-				key: `regional/baaqmd/${citation.toLowerCase().replace(/[^a-z0-9]+/g, '-')}.md`,
+				// The citation regex can miss, so key on the page slug, which is unique.
+				key: `regional/baaqmd/${href.split('/').filter(Boolean).at(-1)!.toLowerCase().replace(/[^a-z0-9]+/g, '-')}.md`,
 				title,
 				jurisdiction: 'Bay Area',
 				level: 'regional',
