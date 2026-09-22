@@ -48,6 +48,9 @@
 			"remote": true,
 		},
 	],
+	// Per-user conversation index (see src/lib/conversations.ts). Local dev uses
+	// Miniflare's in-memory namespace regardless of the id.
+	"kv_namespaces": [{ "binding": "CONVERSATIONS", "id": "ea0c2439cf5f4d00855c37587f9ee72f" }],
 	// The Vite client build (chat + Resources UI) is served as static assets;
 	// requests to /agents/* and /api/* fall through to the Worker above.
 	"assets": {
