@@ -1,6 +1,6 @@
 import { useFlueAgent } from '@flue/react';
 import { useEffect, useRef, useState } from 'react';
-import { History, Landmark, SquarePen } from 'lucide-react';
+import { History, SquarePen } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { ChatPanel } from './ChatPanel.tsx';
@@ -87,9 +87,11 @@ export function App() {
 				>
 					<History className="size-4" />
 				</Button>
-				<Landmark className="size-4 text-muted-foreground" />
+				<span aria-hidden className="text-base leading-none">
+					🌱
+				</span>
 				<h1 className="flex-1 font-heading text-sm font-semibold tracking-tight">
-					Government Regulation Agent
+					Greenhouse Guide
 				</h1>
 				<Button variant="ghost" size="sm" onClick={() => void history.create()}>
 					<SquarePen data-icon="inline-start" />

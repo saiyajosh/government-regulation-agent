@@ -98,7 +98,7 @@ export function ChatPanel({
 						event.preventDefault();
 						void submit();
 					}}
-					placeholder="Ask about a law or regulation…"
+					placeholder="Ask about emissions rules at the federal, California, or Bay Area level…"
 					rows={1}
 					className="max-h-40 min-h-9 resize-none"
 				/>

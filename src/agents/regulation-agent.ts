@@ -23,8 +23,10 @@ function search() {
 const searchLaws = defineTool({
 	name: 'search_laws',
 	description: [
-		'Semantic search over the grounded library of federal, state, county, and municipal acts,',
-		'laws, regulations, and statutes. Phrase the query as a natural-language question or',
+		'Semantic search over the grounded library of greenhouse gas and climate regulation at three',
+		'scopes: Federal (Clean Air Act, EPA rules, GHG Reporting Program, Federal Register), California',
+		'(AB 32, Health and Safety Code, CARB regulations), and the Bay Area (Air District rules and',
+		'Oakland, San Jose, and San Francisco codes). Phrase the query as a natural-language question or',
 		'description of the legal issue (not just keywords). Returns the most relevant documents',
 		'with their best-matching passages, citations, and keys for open_law. Optionally restrict',
 		'to a level of government (regional means an air district such as the Bay Area AQMD), or to a',
