@@ -45,7 +45,7 @@ export function SelectionExplain({
 
 			const region = anchor?.closest<HTMLElement>('[data-explain-region]');
 			const text = selection.toString().trim();
-			const block = region ? topLevelBlock(range.endContainer, region) : null;
+			const block = region ? endBlock(range, region) : null;
 
 			if (!region || !text || !block) return null;
 			const rect = range.getBoundingClientRect();
@@ -288,17 +288,29 @@ function buildInput(
 	};
 }
 
-// The direct child of the region that holds `node`: the paragraph, list,
-// heading, or table the selection ends in.
-function topLevelBlock(node: Node, region: HTMLElement): HTMLElement | null {
-	const el = node instanceof HTMLElement ? node : node.parentElement;
+// The last direct child of the region (paragraph, list, heading, table) that
+// actually contains selected text. Not simply the block holding
+// `range.endContainer`: a triple-click or a drag past the end of a paragraph
+// ends the range at offset 0 of the next block, or on the region itself, and
+// neither holds any of the selection.
+function endBlock(range: Range, region: HTMLElement): HTMLElement | null {
+	const blocks = Array.from(region.children).filter(
+		(child): child is HTMLElement => child instanceof HTMLElement,
+	);
 
-	if (!el || el === region) return null;
-	const parent = el.parentElement;
+	return (
+		blocks.reverse().find((child) => {
+			if (!range.intersectsNode(child)) return false;
+			// Clip the range to this block and see whether any text survives.
+			const clipped = range.cloneRange();
 
-	if (!parent) return null;
+			if (range.comparePoint(child, 0) >= 0) clipped.setStart(child, 0);
 
-	if (parent === region) return el;
+			if (range.comparePoint(child, child.childNodes.length) <= 0) {
+				clipped.setEnd(child, child.childNodes.length);
+			}
 
-	return topLevelBlock(parent, region);
+			return clipped.toString().trim() !== '';
+		}) ?? null
+	);
 }
