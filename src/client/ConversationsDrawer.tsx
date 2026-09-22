@@ -2,7 +2,7 @@ import { MessageSquare, SquarePen, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
-import type { ConversationSummary } from './conversations.ts';
+import type { ConversationRecord } from '../lib/conversations.ts';
 
 // Past conversations for this browser's identity, newest activity first.
 export function ConversationsDrawer({
@@ -14,7 +14,7 @@ export function ConversationsDrawer({
 	onClose,
 }: {
 	open: boolean;
-	conversations: ConversationSummary[];
+	conversations: ConversationRecord[];
 	currentId: string | null;
 	onSelect: (id: string) => void;
 	onNew: () => void;
