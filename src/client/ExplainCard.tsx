@@ -60,16 +60,20 @@ export function ExplainPrompt({
 // travel as `initialData` on the single send, and nothing contacts that
 // conversation again after it settles.
 export function ExplainCard({
+	userId,
 	input,
 	question,
 	onDismiss,
 }: {
+	userId: string;
 	input: ExplainInput;
 	question: string;
 	onDismiss: () => void;
 }) {
+	// Explain ids follow the same `<userId>.<random>` shape the ownership
+	// middleware checks; they are just never indexed.
 	const agent = useFlueAgent({
-		url: useMemo(() => `/agents/explain/${crypto.randomUUID()}`, []),
+		url: useMemo(() => `/agents/explain/${userId}.${crypto.randomUUID().replaceAll('-', '')}`, [userId]),
 	});
 
 	const busy = agent.status === 'submitted' || agent.status === 'streaming';
