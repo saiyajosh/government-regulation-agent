@@ -58,6 +58,23 @@ one document). There is no list endpoint on purpose: the library will hold
 too many laws to enumerate, so documents surface only when the agent opens
 them.
 
+## Test
+
+```sh
+pnpm test    # unit tests: library, conversations, routes, tools, client helpers
+pnpm evals   # agent evals against the live model (needs CLOUDFLARE_* in .env)
+```
+
+Unit tests run under plain Vitest with in-memory fakes for the R2, AI Search,
+and KV bindings (`src/test/fakes.ts`); nothing touches Cloudflare. The
+seams are structural: `src/lib/documents.ts` and `src/lib/conversations.ts`
+take the slice of the binding they use, `src/app.ts` takes an `AppEnv`, and
+the agent's tools take a `Library`. Evals (`src/evals/`) run the real agent
+body in-process via Flue's `start()` over a small fixture corpus with an
+in-memory `Library`, so they measure instructions, model, and tool
+orchestration without depending on the AI Search index. They spend tokens
+and are nondeterministic, so they live in their own config and script.
+
 ## Search index (Cloudflare AI Search)
 
 Semantic search runs through a Cloudflare AI Search instance that indexes the
