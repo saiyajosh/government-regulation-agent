@@ -58,7 +58,7 @@ const PROMPTS = [
 
 export function Welcome({ onPrompt, disabled }: { onPrompt: (text: string) => void; disabled?: boolean }) {
 	return (
-		<div className="relative mx-auto flex w-full max-w-3xl flex-col gap-10 px-2 pt-10 pb-6 sm:pt-16">
+		<div className="relative isolate mx-auto flex w-full max-w-3xl flex-col gap-10 px-2 pt-10 pb-6 sm:pt-16">
 			<div
 				aria-hidden
 				className="pointer-events-none absolute inset-x-0 -top-10 -z-10 h-72 bg-[radial-gradient(ellipse_at_top,var(--color-muted)_0%,transparent_70%)]"
