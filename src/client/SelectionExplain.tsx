@@ -294,8 +294,11 @@ function topLevelBlock(node: Node, region: HTMLElement): HTMLElement | null {
 	const el = node instanceof HTMLElement ? node : node.parentElement;
 
 	if (!el || el === region) return null;
+	const parent = el.parentElement;
 
-	if (el.parentElement === region) return el;
+	if (!parent) return null;
 
-	return topLevelBlock(el.parentElement as Node, region);
+	if (parent === region) return el;
+
+	return topLevelBlock(parent, region);
 }

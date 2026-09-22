@@ -9,6 +9,8 @@ import { GATEWAY_MODEL, gatewayProvider } from '../lib/gateway.ts';
 setProvider(gatewayProvider());
 
 function bucket() {
+	// SAFETY: wrangler.jsonc binds DOCUMENTS_BUCKET as an R2 bucket; Flue's
+	// CloudflareContext exposes env as an untyped record.
 	return getCloudflareContext().env.DOCUMENTS_BUCKET as R2Bucket;
 }
 

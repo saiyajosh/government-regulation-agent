@@ -20,7 +20,7 @@ interface Frontmatter {
 
 // Documents are stored as Markdown/MDX with a small `---` delimited
 // frontmatter block up front (title, jurisdiction, citation, sourceUrl).
-function parseFrontmatter(raw: string): { meta: Frontmatter; body: string } {
+function parseFrontmatter(raw: string) {
 	const match = /^---\n([\s\S]*?)\n---\n?([\s\S]*)$/.exec(raw);
 	const meta: Frontmatter = { title: '', jurisdiction: '', citation: '', sourceUrl: '' };
 

@@ -41,6 +41,9 @@ export function App() {
 				if (part.type !== 'dynamic-tool') continue;
 
 				if (part.toolName !== 'open_law' || part.state !== 'output-available') continue;
+				// SAFETY: open_law's run() in regulation-agent.ts returns either the
+				// DocumentRecord it loaded or `{ error }`; dynamic-tool parts carry that
+				// output untyped.
 				const output = part.output as DocumentRecord | { error: string };
 
 				if ('error' in output) continue;
