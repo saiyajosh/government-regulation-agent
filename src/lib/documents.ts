@@ -56,14 +56,21 @@ function parseFrontmatter(raw: string) {
 		const key = line.slice(0, separator).trim();
 		const rawValue = line.slice(separator + 1).trim();
 		// renderFrontmatter JSON-quotes values, so a double-quoted value is decoded
-		// the same way to round-trip embedded quotes and backslashes.
-		const value = /^".*"$/.test(rawValue) ? String(JSON.parse(rawValue)) : rawValue.replace(/^'|'$/g, '');
+		// the same way to round-trip embedded quotes and backslashes. Only a
+		// well-formed JSON string is decoded: a hand-authored value such as
+		// `"The "Act" of 1990"` keeps its raw text minus the outer quotes rather
+		// than throwing out of every document load that touches it.
+		const value = JSON_STRING.test(rawValue) ? String(JSON.parse(rawValue)) : rawValue.replace(/^["']|["']$/g, '');
 
 		if (key in meta) meta[key] = value;
 	}
 
 	return { meta, body: match[2] };
 }
+
+// The JSON string grammar: no raw quotes, backslashes, or control characters
+// inside, and only the escapes JSON.parse accepts.
+const JSON_STRING = /^"(?:[^"\\\u0000-\u001f]|\\["\\/bfnrt]|\\u[0-9a-fA-F]{4})*"$/;
 
 export async function getDocument(bucket: R2Bucket, key: string): Promise<DocumentRecord | null> {
 	const object = await bucket.get(key);

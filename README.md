@@ -1,4 +1,4 @@
-# government-regulation-agent
+# Greenhouse Guide 🌱
 
 Explore and understand greenhouse gas regulation at the federal, California,
 and Bay Area levels (the library is seeded from official sources; see below):
