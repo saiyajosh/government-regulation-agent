@@ -51,10 +51,15 @@ app.use('/agents/:agent/:id/*', async (c, next) => {
 // snippet PATCH to /api/conversations/:id once each reply settles, so the two
 // index writers never overlap in time.
 app.post('/agents/regulation-agent/:id', async (c, next) => {
-	const message = await c.req.raw.clone().json<{ kind?: string; body?: string }>();
+	// Clone before next() because the router consumes the body stream, but parse only after a 202: the
+	// router has validated the body as JSON by then, so malformed bodies get its 400 rather than a 500 here.
+	const pending = c.req.raw.clone();
 	await next();
 
-	if (c.res.status !== 202 || message.kind !== 'user' || !message.body) return;
+	if (c.res.status !== 202) return;
+	const message = await pending.json<{ kind?: string; body?: string }>();
+
+	if (message.kind !== 'user' || !message.body) return;
 	c.executionCtx.waitUntil(stampTitle(c.env.CONVERSATIONS, c.get('userId'), c.req.param('id'), message.body));
 });
 
