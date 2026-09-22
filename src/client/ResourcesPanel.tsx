@@ -6,6 +6,7 @@ import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useCompiledMdx } from './mdx.tsx';
+import { LEVELS, LevelBadge } from './LevelBadge.tsx';
 import type { DocumentRecord } from './types.ts';
 
 // One tab per document the agent has opened via open_law. The panel has no
@@ -72,7 +73,11 @@ function DocumentView({ doc }: { doc: DocumentRecord }) {
 			<header className="flex flex-col gap-3">
 				<h2 className="font-heading text-2xl font-semibold tracking-tight">{doc.title}</h2>
 				<div className="flex flex-wrap items-center gap-1.5">
-					<Badge variant="secondary">{doc.jurisdiction}</Badge>
+					<LevelBadge level={doc.level} />
+					{/* Federal documents name their jurisdiction "Federal" too; one badge is enough. */}
+					{doc.jurisdiction.toLowerCase() !== LEVELS[doc.level]?.label.toLowerCase() && (
+						<Badge variant="secondary">{doc.jurisdiction}</Badge>
+					)}
 					{doc.citation && <Badge variant="outline">{doc.citation}</Badge>}
 					{doc.issuingBody && <Badge variant="outline">{doc.issuingBody}</Badge>}
 					{doc.sourceUrl && (

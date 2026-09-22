@@ -1,8 +1,9 @@
 # AGENTS.md
 
-An application to help users explore and gain a deep understanding of federal,
-state, county, and municipal acts, laws, regulations, and statutes within the
-United States, via a chat agent grounded in a sourced document library.
+Greenhouse Guide: an application to help users understand greenhouse gas and
+climate regulation at three scopes, Federal, California, and the Bay Area, via
+a chat agent grounded in a sourced document library of statutes, regulations,
+and air district and municipal rules.
 
 This is a [Flue](https://flueframework.com) project (agents are TypeScript
 functions) targeting the Cloudflare Workers runtime, built with Vite, Hono,
