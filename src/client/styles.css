@@ -137,11 +137,11 @@
    the two cannot drift apart. Cited quotes are a translucent blue; retrieved
    search chunks are a fainter green wash underneath. */
 :root {
-	--highlight-cited: color-mix(in oklab, var(--color-sky-400) 45%, transparent);
+	--highlight-cited: color-mix(in oklab, var(--color-sky-700) 35%, transparent);
 	--highlight-retrieved: color-mix(in oklab, var(--color-emerald-300) 40%, transparent);
 }
 .dark {
-	--highlight-cited: color-mix(in oklab, var(--color-sky-400) 50%, transparent);
+	--highlight-cited: color-mix(in oklab, var(--color-sky-700) 40%, transparent);
 	--highlight-retrieved: color-mix(in oklab, var(--color-emerald-400) 30%, transparent);
 }
 ::highlight(cited-passage) {
