@@ -8,11 +8,29 @@ import {
 	isUntouched,
 	listConversations,
 	updateConversation,
+	type ConversationIndex,
 } from './lib/conversations.ts';
-import { getDocument, putDocument, renderFrontmatter } from './lib/documents.ts';
+import { getDocument, putDocument, renderFrontmatter, type DocumentStore } from './lib/documents.ts';
 import { mintConversationId, ownsConversation, requireUser } from './lib/identity.ts';
 
-const app = new Hono<{ Bindings: Env; Variables: { userId: string } }>();
+// The slice of the Worker's Env the routes use, declared structurally so the
+// real bindings satisfy it and tests can pass in-memory fakes.
+export interface AppEnv {
+	CONVERSATIONS: ConversationIndex;
+	DOCUMENTS_BUCKET: DocumentStore & {
+		list(options: { prefix: string; cursor?: string; limit: number }): Promise<{
+			objects: { key: string }[];
+			truncated: boolean;
+			cursor?: string;
+		}>;
+		delete(keys: string[]): Promise<void>;
+	};
+	AI: { toMarkdown(file: { name: string; blob: Blob }): Promise<ConversionResponse> };
+	SEED_TOKEN?: string;
+	COOKIE_SECRET?: string;
+}
+
+const app = new Hono<{ Bindings: AppEnv; Variables: { userId: string } }>();
 
 // Conversation and agent requests run as an anonymous cookie identity. The
 // cookie is minted on first contact, so the first request a browser makes
@@ -178,7 +196,7 @@ function seedAuthorized(header: string | undefined, token: string | undefined) {
 	return Boolean(token) && header === `Bearer ${token}`;
 }
 
-async function stampTitle(kv: KVNamespace, userId: string, id: string, body: string) {
+async function stampTitle(kv: ConversationIndex, userId: string, id: string, body: string) {
 	const current = await getConversation(kv, userId, id);
 
 	if (!current || !isUntouched(current)) return;
