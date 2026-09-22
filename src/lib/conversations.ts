@@ -15,6 +15,15 @@ export interface ConversationRecord {
 
 type Metadata = Omit<ConversationRecord, 'id'>;
 
+export const DEFAULT_TITLE = 'New conversation';
+
+// A conversation is untouched until its first prompt is stamped (which bumps
+// updatedAt) or a snippet lands. The title is not consulted, so a user whose
+// first prompt is literally the default title still counts as touched.
+export function isUntouched(record: Pick<ConversationRecord, 'snippet' | 'createdAt' | 'updatedAt'>) {
+	return !record.snippet && record.createdAt === record.updatedAt;
+}
+
 const TITLE_MAX = 80;
 
 const SNIPPET_MAX = 160;
@@ -29,7 +38,7 @@ export async function createConversation(
 	conversationId: string,
 ): Promise<ConversationRecord> {
 	const now = new Date().toISOString();
-	const record = { id: conversationId, title: 'New conversation', snippet: '', createdAt: now, updatedAt: now };
+	const record = { id: conversationId, title: DEFAULT_TITLE, snippet: '', createdAt: now, updatedAt: now };
 	await write(kv, userId, record);
 
 	return record;
