@@ -1,10 +1,12 @@
-import { ExternalLink, X } from 'lucide-react';
+import { ChevronDown, ChevronUp, ExternalLink, Highlighter, X } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { applyHighlights, clearHighlights, supportsHighlights, type Passage } from './highlights.ts';
 import { useCompiledMdx } from './mdx.tsx';
 import { LEVELS, LevelBadge } from './LevelBadge.tsx';
 import type { DocumentRecord } from './types.ts';
@@ -14,11 +16,13 @@ import type { DocumentRecord } from './types.ts';
 // enumerate, so documents appear only when the agent surfaces them.
 export function ResourcesPanel({
 	openDocs,
+	passages,
 	activeKey,
 	onSelect,
 	onClose,
 }: {
 	openDocs: DocumentRecord[];
+	passages: Record<string, Passage[]>;
 	activeKey: string;
 	onSelect: (key: string) => void;
 	onClose: (key: string) => void;
@@ -57,7 +61,7 @@ export function ResourcesPanel({
 			{openDocs.map((doc) => (
 				<TabsContent key={doc.key} value={doc.key} className="min-h-0">
 					<ScrollArea className="h-full">
-						<DocumentView doc={doc} />
+						<DocumentView doc={doc} passages={passages[doc.key] ?? []} />
 					</ScrollArea>
 				</TabsContent>
 			))}
@@ -65,8 +69,42 @@ export function ResourcesPanel({
 	);
 }
 
-function DocumentView({ doc }: { doc: DocumentRecord }) {
+function DocumentView({ doc, passages }: { doc: DocumentRecord; passages: Passage[] }) {
 	const { Content, error } = useCompiledMdx(doc.body);
+	const proseRef = useRef<HTMLDivElement>(null);
+	const [cited, setCited] = useState<Range[]>([]);
+	const [retrieved, setRetrieved] = useState(0);
+	const [cursor, setCursor] = useState(-1);
+
+	// Re-paint whenever the prose mounts or the passage list grows (tool parts
+	// stream in while the agent is still working). Only one DocumentView is
+	// mounted at a time, so the page-wide highlight registry is ours to reset.
+	useEffect(() => {
+		const root = proseRef.current;
+		if (!root || !Content) return;
+		const result = applyHighlights(root, passages);
+		setCited(result.anchors);
+		setRetrieved(result.matched.retrieved);
+		setCursor(-1);
+		return clearHighlights;
+	}, [Content, passages]);
+
+	// The first cited passage scrolls into view on its own; later ones are a
+	// click away. Ranges have no scrollIntoView, so the nearest element stands in.
+	// Only `cited` is a dependency on purpose: a jump should not re-fire when
+	// the cursor moves.
+	useEffect(() => {
+		if (cursor === -1 && cited.length > 0) jumpTo(0);
+	}, [cited]);
+
+	function jumpTo(index: number) {
+		const range = cited[index];
+		if (!range) return;
+		setCursor(index);
+		const node = range.startContainer;
+		const element = node instanceof Element ? node : node.parentElement;
+		element?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+	}
 
 	return (
 		<article className="mx-auto max-w-3xl p-6">
@@ -94,6 +132,42 @@ function DocumentView({ doc }: { doc: DocumentRecord }) {
 				)}
 			</header>
 			<Separator className="my-5" />
+			{supportsHighlights() && (cited.length > 0 || retrieved > 0) && (
+				<div className="sticky top-2 z-10 mb-4 flex w-fit items-center gap-1 rounded-full border bg-background/95 py-1 pr-1 pl-3 text-xs shadow-sm backdrop-blur">
+					<Highlighter className="size-3.5 text-amber-600 dark:text-amber-400" />
+					<span>
+						{cited.length > 0 && (
+							<span>
+								{cited.length} cited{cursor >= 0 && ` (${cursor + 1}/${cited.length})`}
+							</span>
+						)}
+						{cited.length > 0 && retrieved > 0 && <span className="text-muted-foreground"> · </span>}
+						{retrieved > 0 && <span className="text-muted-foreground">{retrieved} retrieved</span>}
+					</span>
+					{cited.length > 1 && (
+						<span className="ml-1 flex">
+							<Button
+								variant="ghost"
+								size="icon"
+								className="size-6"
+								aria-label="Previous cited passage"
+								onClick={() => jumpTo((cursor - 1 + cited.length) % cited.length)}
+							>
+								<ChevronUp className="size-3.5" />
+							</Button>
+							<Button
+								variant="ghost"
+								size="icon"
+								className="size-6"
+								aria-label="Next cited passage"
+								onClick={() => jumpTo((cursor + 1) % cited.length)}
+							>
+								<ChevronDown className="size-3.5" />
+							</Button>
+						</span>
+					)}
+				</div>
+			)}
 			{error && <p className="text-sm text-destructive">Could not render document: {error}</p>}
 			{!error && !Content && (
 				<div className="flex flex-col gap-3">
@@ -105,6 +179,7 @@ function DocumentView({ doc }: { doc: DocumentRecord }) {
 			{!error && Content && (
 				// Selecting text here enables the explain shortcut (see SelectionExplain).
 				<div
+					ref={proseRef}
 					data-explain-region="document"
 					data-explain-doc={doc.key}
 					className="prose prose-neutral dark:prose-invert max-w-none"
