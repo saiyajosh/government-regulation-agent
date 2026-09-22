@@ -1,13 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { isUntouched } from '../lib/conversations.ts';
-
-export interface ConversationSummary {
-	id: string;
-	title: string;
-	snippet: string;
-	createdAt: string;
-	updatedAt: string;
-}
+import { isUntouched, type ConversationRecord } from '../lib/conversations.ts';
 
 const CURRENT_STORAGE_KEY = 'gra:conversation-id';
 
@@ -17,15 +9,15 @@ const CURRENT_STORAGE_KEY = 'gra:conversation-id';
 // load (a stale or foreign id just falls through to a new conversation).
 export function useConversations() {
 	const [userId, setUserId] = useState<string | null>(null);
-	const [conversations, setConversations] = useState<ConversationSummary[]>([]);
+	const [conversations, setConversations] = useState<ConversationRecord[]>([]);
 	const [currentId, setCurrentId] = useState<string | null>(null);
 
 	const refresh = useCallback(async () => {
 		const res = await fetch('/api/conversations');
 		// SAFETY: GET /api/conversations in app.ts responds with
 		// `{ userId, conversations: listConversations(...) }`, whose entries are
-		// the same summary records this hook renders.
-		const data = (await res.json()) as { userId: string; conversations: ConversationSummary[] };
+		// the same ConversationRecord entries this hook renders.
+		const data = (await res.json()) as { userId: string; conversations: ConversationRecord[] };
 		setUserId(data.userId);
 		setConversations(data.conversations);
 
@@ -34,7 +26,7 @@ export function useConversations() {
 
 	// An untouched conversation (never prompted) is reused rather than
 	// stacking empties in the list.
-	const create = useCallback(async (existing: ConversationSummary[] = []) => {
+	const create = useCallback(async (existing: ConversationRecord[] = []) => {
 		const empty = existing.find((c) => isUntouched(c));
 
 		if (empty) {
@@ -46,7 +38,7 @@ export function useConversations() {
 		const res = await fetch('/api/conversations', { method: 'POST' });
 		// SAFETY: POST /api/conversations in app.ts responds with the single
 		// record from createConversation(...), the same shape as a list entry.
-		const record = (await res.json()) as ConversationSummary;
+		const record = (await res.json()) as ConversationRecord;
 		setConversations((all) => [record, ...all]);
 		select(record.id);
 
