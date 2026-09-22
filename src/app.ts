@@ -2,23 +2,86 @@ import { createAgentRouter } from '@flue/runtime/routing';
 import { Hono } from 'hono';
 import { ExplainAgent } from './agents/explain-agent.ts';
 import { RegulationAgent } from './agents/regulation-agent.ts';
+import {
+	createConversation,
+	getConversation,
+	listConversations,
+	updateConversation,
+} from './lib/conversations.ts';
 import { getDocument, putDocument, renderFrontmatter } from './lib/documents.ts';
+import { mintConversationId, ownsConversation, requireUser } from './lib/identity.ts';
 
-const app = new Hono<{ Bindings: Env }>();
+const app = new Hono<{ Bindings: Env; Variables: { userId: string } }>();
+
+// Every API and agent request runs as an anonymous cookie identity. The
+// cookie is minted on first contact, so the first request a browser makes
+// (the conversation list) is what establishes who it is.
+app.use('/api/*', async (c, next) => {
+	c.set('userId', await requireUser(c));
+	await next();
+});
+
+// Agent mounts carry no auth of their own (see Flue's routing guide), so the
+// host app checks both halves here: who is calling, and whether the
+// conversation id in the path belongs to them. Ids are server-issued as
+// `<userId>.<random>`, so ownership is a prefix test and a guessed id is
+// rejected without any lookup. The pattern ends in `/*` to cover prompts,
+// stream reads, aborts, and attachment downloads alike.
+app.use('/agents/:agent/:id/*', async (c, next) => {
+	const userId = await requireUser(c);
+	if (!ownsConversation(userId, c.req.param('id'))) return c.json({ error: 'forbidden' }, 403);
+	c.set('userId', userId);
+	await next();
+});
 
 // Chat with the agent: one POST per message.
 //
-//   curl -X POST http://localhost:5173/agents/regulation-agent/my-first-chat \
+//   curl -X POST http://localhost:5173/agents/regulation-agent/<userId>.<id> \
 //     -H 'content-type: application/json' \
 //     -d '{"kind":"user","body":"What does the Administrative Procedure Act require?"}'
+//
+// A user prompt also stamps the index: the first message becomes the title,
+// and every message bumps updatedAt. The assistant's snippet arrives later
+// via PATCH /api/conversations/:id once the client sees the reply settle.
+app.post('/agents/regulation-agent/:id', async (c, next) => {
+	const message = await c.req.raw.clone().json<{ kind?: string; body?: string }>();
+	await next();
+	if (c.res.status !== 202 || message.kind !== 'user' || !message.body) return;
+	c.executionCtx.waitUntil(stampTitle(c.env.CONVERSATIONS, c.get('userId'), c.req.param('id'), message.body));
+});
+
 // `hono` is pinned to the exact version @flue/runtime depends on so the
 // router it returns and this app share one Hono type.
 app.route('/agents/regulation-agent', createAgentRouter(RegulationAgent));
 
-// One-shot explainer for a highlighted passage in the Resources panel. The
-// client mints a fresh conversation id per highlight and sends the document
-// plus selection as `initialData` with its single question.
+// One-shot explainer for a highlighted passage. The client mints a fresh
+// `<userId>.<random>` id per highlight and sends the document plus selection
+// as `initialData` with its single question. Not indexed: it is throwaway.
 app.route('/agents/explain', createAgentRouter(ExplainAgent));
+
+// The caller's conversations, newest activity first, plus the user id the
+// client needs to mint ids for the explain agent.
+app.get('/api/conversations', async (c) => {
+	const userId = c.get('userId');
+	return c.json({ userId, conversations: await listConversations(c.env.CONVERSATIONS, userId) });
+});
+
+app.post('/api/conversations', async (c) => {
+	const userId = c.get('userId');
+	return c.json(await createConversation(c.env.CONVERSATIONS, userId, mintConversationId(userId)), 201);
+});
+
+// The client reports the reply snippet for the list view. Only the owner's
+// own requests reach here, so a self-reported snippet is trusted.
+app.patch('/api/conversations/:id', async (c) => {
+	const userId = c.get('userId');
+	const id = c.req.param('id');
+	if (!ownsConversation(userId, id)) return c.json({ error: 'forbidden' }, 403);
+	const patch = await c.req.json<{ title?: string; snippet?: string }>();
+	const record = await updateConversation(c.env.CONVERSATIONS, userId, id, patch);
+	if (!record) return c.json({ error: 'not found' }, 404);
+	return c.json(record);
+});
 
 // Read a single grounded document by key, independent of the chat agent.
 // There is deliberately no list endpoint: the library will grow to many
@@ -94,6 +157,12 @@ app.delete('/api/documents', async (c) => {
 
 function seedAuthorized(header: string | undefined, token: string | undefined) {
 	return Boolean(token) && header === `Bearer ${token}`;
+}
+
+async function stampTitle(kv: KVNamespace, userId: string, id: string, body: string) {
+	const current = await getConversation(kv, userId, id);
+	if (!current) return;
+	await updateConversation(kv, userId, id, current.title === 'New conversation' ? { title: body } : {});
 }
 
 export default app;

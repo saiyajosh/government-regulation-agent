@@ -26,10 +26,25 @@ CLOUDFLARE_API_KEY="<AI Gateway token>"
 CLOUDFLARE_ACCOUNT_ID="<account id>"
 CLOUDFLARE_GATEWAY_ID="<gateway slug>"
 CLOUDFLARE_AI_GATEWAY_BYOK_ALIAS="greenhouse-guide-model-key"
+# Signs the anonymous identity cookie; any long random string (openssl rand -hex 32)
+COOKIE_SECRET="<random>"
 ```
 
 For the deployed Worker, the non-secret values are `vars` in `wrangler.jsonc`
-and the token is a secret: `wrangler secret put CLOUDFLARE_API_KEY`.
+and the secrets are set with `wrangler secret put CLOUDFLARE_API_KEY` and
+`wrangler secret put COOKIE_SECRET`.
+
+## Identity and conversation history
+
+There is no login. Each browser gets an anonymous id in a signed, HttpOnly
+cookie on first contact (`src/lib/identity.ts`). Conversation ids are issued by
+the server as `<userId>.<random>`, and middleware in `src/app.ts` rejects any
+agent request whose id does not carry the caller's prefix, so a guessed id is
+refused without a lookup. The per-user list (title, snippet, timestamps) lives
+in the `CONVERSATIONS` KV namespace (`src/lib/conversations.ts`); local dev
+uses Miniflare's in-memory namespace. To move to real auth later, replace the
+source of the user id (for example a verified Cloudflare Access JWT) and leave
+the ownership check and index unchanged.
 
 ## Develop
 

@@ -13,9 +13,11 @@ import type { DocumentRecord } from './types.ts';
 // portaled into a host <div> inserted directly after the block the selection
 // ended in, so the React-owned document/chat trees are never mutated.
 export function SelectionExplain({
+	userId,
 	openDocs,
 	chatStarted,
 }: {
+	userId: string | null;
 	openDocs: DocumentRecord[];
 	chatStarted: boolean;
 }) {
@@ -119,7 +121,7 @@ export function SelectionExplain({
 	}, []);
 
 	function ask(question: string) {
-		if (!pending) return;
+		if (!pending || !userId) return;
 		const input = buildInput(pending, openDocs);
 
 		if (!input) return setPending(null);
@@ -181,6 +183,7 @@ export function SelectionExplain({
 				createPortal(
 					<ExplainCard
 						key={card.id}
+						userId={userId ?? ''}
 						input={card.input}
 						question={card.question}
 						onDismiss={() => {
