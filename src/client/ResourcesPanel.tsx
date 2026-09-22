@@ -1,5 +1,5 @@
 import { ChevronDown, ChevronUp, ExternalLink, Highlighter, X } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -76,20 +76,28 @@ function DocumentView({ doc, passages }: { doc: DocumentRecord; passages: Passag
 	const [retrieved, setRetrieved] = useState(0);
 	const [cursor, setCursor] = useState(-1);
 
+	// App.tsx rebuilds the passage list from `agent.messages` on every stream
+	// chunk, so the array identity churns while its contents rarely change.
+	// Keying on the contents keeps the re-paint (and the scroll it triggers)
+	// to the moments a passage was actually added.
+	const passageKey = passages.map((passage) => `${passage.kind}\u0001${passage.text}`).join('\u0000');
+	const stablePassages = useMemo(() => passages, [passageKey]);
+
 	// Re-paint whenever the prose mounts or the passage list grows (tool parts
 	// stream in while the agent is still working). Only one DocumentView is
 	// mounted at a time, so the page-wide highlight registry is ours to reset.
+	// A cursor that still points at a passage survives the re-paint.
 	useEffect(() => {
 		const root = proseRef.current;
 
 		if (!root || !Content) return;
-		const result = applyHighlights(root, passages);
+		const result = applyHighlights(root, stablePassages);
 		setCited(result.anchors);
 		setRetrieved(result.matched.retrieved);
-		setCursor(-1);
+		setCursor((current) => (current < result.anchors.length ? current : -1));
 
 		return clearHighlights;
-	}, [Content, passages]);
+	}, [Content, stablePassages]);
 
 	// The first cited passage scrolls into view on its own; later ones are a
 	// click away. Ranges have no scrollIntoView, so the nearest element stands in.
