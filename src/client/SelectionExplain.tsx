@@ -24,6 +24,7 @@ export function SelectionExplain({
 	// smuggling side effects into a state updater.
 	const pendingRef = useRef<Pending | null>(null);
 	pendingRef.current = pending;
+
 	const [cards, setCards] = useState<
 		{ id: string; input: ExplainInput; question: string; host: HTMLDivElement }[]
 	>([]);
@@ -33,17 +34,22 @@ export function SelectionExplain({
 
 		function readSelection() {
 			const selection = window.getSelection();
+
 			if (!selection || selection.isCollapsed || selection.rangeCount === 0) return null;
 			const range = selection.getRangeAt(0);
+
 			const anchor =
 				range.commonAncestorContainer instanceof Element
 					? range.commonAncestorContainer
 					: range.commonAncestorContainer.parentElement;
+
 			const region = anchor?.closest<HTMLElement>('[data-explain-region]');
 			const text = selection.toString().trim();
 			const block = region ? topLevelBlock(range.endContainer, region) : null;
+
 			if (!region || !text || !block) return null;
 			const rect = range.getBoundingClientRect();
+
 			return {
 				text,
 				block,
@@ -56,6 +62,7 @@ export function SelectionExplain({
 
 		function settle() {
 			const next = readSelection();
+
 			if (!next) return;
 			setPending((current) => (current?.prompt ? current : { ...next, prompt: false }));
 		}
@@ -65,25 +72,32 @@ export function SelectionExplain({
 			// A collapsed selection clears the hint but never an open prompt
 			// (focusing the prompt's input collapses the selection).
 			const next = readSelection();
+
 			if (!next) return setPending((current) => (current?.prompt ? current : null));
 			settle();
 		}
+
 		function onMouseDown(event: MouseEvent) {
 			if (event.target instanceof Element && event.target.closest('[data-explain-ui]')) return;
 			mouseDown = true;
 			setPending(null);
 		}
+
 		function onMouseUp() {
 			mouseDown = false;
 			// Let the browser finish committing the selection first.
 			setTimeout(settle, 0);
 		}
+
 		function onKeyDown(event: KeyboardEvent) {
 			if (event.key === 'Escape') return setPending(null);
+
 			// ⌘/ on Mac, Ctrl+/ elsewhere. `code` covers layouts where `/` needs a modifier.
 			if (!(event.metaKey || event.ctrlKey) || event.shiftKey || event.altKey) return;
+
 			if (event.key !== '/' && event.code !== 'Slash') return;
 			const base = readSelection() ?? pendingRef.current;
+
 			if (!base) return;
 			event.preventDefault();
 			event.stopPropagation();
@@ -95,6 +109,7 @@ export function SelectionExplain({
 		document.addEventListener('mouseup', onMouseUp);
 		// Capture phase on window so no focused control can swallow the shortcut.
 		window.addEventListener('keydown', onKeyDown, true);
+
 		return () => {
 			document.removeEventListener('selectionchange', onSelectionChange);
 			document.removeEventListener('mousedown', onMouseDown);
@@ -106,6 +121,7 @@ export function SelectionExplain({
 	function ask(question: string) {
 		if (!pending) return;
 		const input = buildInput(pending, openDocs);
+
 		if (!input) return setPending(null);
 		const host = document.createElement('div');
 		// Not `.after()`: workers-types' HTMLRewriter `Element` shadows the DOM signature.
@@ -122,6 +138,7 @@ export function SelectionExplain({
 		if (!chatStarted || !claimNudge()) return;
 		setNudge(true);
 		const timer = setTimeout(() => setNudge(false), 10_000);
+
 		return () => clearTimeout(timer);
 	}, [chatStarted]);
 	useEffect(() => {
@@ -185,6 +202,7 @@ function claimNudge() {
 	try {
 		if (sessionStorage.getItem(NUDGE_STORAGE_KEY)) return false;
 		sessionStorage.setItem(NUDGE_STORAGE_KEY, '1');
+
 		return true;
 	} catch {
 		return true;
@@ -203,6 +221,7 @@ type Pending = {
 
 // Approximate rendered heights, for choosing above vs. below the selection.
 const HINT_HEIGHT = 40;
+
 const PROMPT_HEIGHT = 110;
 
 const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
@@ -211,6 +230,7 @@ const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigat
 // the list shape leaves room for more.
 const hintPill =
 	'flex items-center gap-2 rounded-md border border-violet-300 bg-violet-50/95 text-xs text-violet-800 shadow-sm backdrop-blur dark:border-violet-800 dark:bg-violet-950/95 dark:text-violet-200';
+
 const hintKbd =
 	'rounded border border-violet-300 bg-violet-100 px-1 font-mono text-[10px] text-violet-900 dark:border-violet-700 dark:bg-violet-900 dark:text-violet-100';
 
@@ -238,6 +258,7 @@ function buildInput(
 	openDocs: DocumentRecord[],
 ): ExplainInput | null {
 	const context = pending.block.textContent?.trim() ?? '';
+
 	if (pending.region.dataset.explainRegion === 'chat') {
 		return {
 			source: 'chat',
@@ -250,8 +271,11 @@ function buildInput(
 			context,
 		};
 	}
+
 	const doc = openDocs.find((d) => d.key === pending.region.dataset.explainDoc);
+
 	if (!doc) return null;
+
 	return {
 		source: 'document',
 		key: doc.key,
@@ -268,7 +292,10 @@ function buildInput(
 // heading, or table the selection ends in.
 function topLevelBlock(node: Node, region: HTMLElement): HTMLElement | null {
 	const el = node instanceof HTMLElement ? node : node.parentElement;
+
 	if (!el || el === region) return null;
+
 	if (el.parentElement === region) return el;
+
 	return topLevelBlock(el.parentElement as Node, region);
 }

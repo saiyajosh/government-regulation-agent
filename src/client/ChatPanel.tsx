@@ -27,6 +27,7 @@ export function ChatPanel({
 
 	async function send(text: string) {
 		const message = text.trim();
+
 		if (!message || busy) return;
 		setInput('');
 		await agent.sendMessage(message);
@@ -64,8 +65,10 @@ export function ChatPanel({
 										</p>
 									);
 								}
+
 								if (part.type === 'dynamic-tool') {
 									const done = part.state === 'output-available';
+
 									return (
 										<Badge key={index} variant="outline" className="w-fit gap-1.5 font-mono">
 											{done ? <Wrench /> : <Loader2 className="animate-spin" />}
@@ -73,6 +76,7 @@ export function ChatPanel({
 										</Badge>
 									);
 								}
+
 								return null;
 							})}
 						</article>

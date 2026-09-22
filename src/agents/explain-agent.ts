@@ -1,4 +1,5 @@
 'use agent';
+
 import { setProvider, useInitialData, useModel } from '@flue/runtime';
 import { explainInput, type ExplainInput } from '../lib/explain.ts';
 import { GATEWAY_MODEL, gatewayProvider } from '../lib/gateway.ts';
@@ -41,4 +42,5 @@ export function ExplainAgent() {
 }
 
 ExplainAgent.agentName = 'Explain';
+
 ExplainAgent.initialData = explainInput;

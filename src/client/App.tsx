@@ -12,9 +12,11 @@ const CONVERSATION_STORAGE_KEY = 'gra:conversation-id';
 function getConversationId() {
 	try {
 		const existing = sessionStorage.getItem(CONVERSATION_STORAGE_KEY);
+
 		if (existing) return existing;
 		const id = crypto.randomUUID();
 		sessionStorage.setItem(CONVERSATION_STORAGE_KEY, id);
+
 		return id;
 	} catch {
 		return crypto.randomUUID();
@@ -37,8 +39,10 @@ export function App() {
 		for (const message of agent.messages) {
 			for (const part of message.parts) {
 				if (part.type !== 'dynamic-tool') continue;
+
 				if (part.toolName !== 'open_law' || part.state !== 'output-available') continue;
 				const output = part.output as DocumentRecord | { error: string };
+
 				if ('error' in output) continue;
 				setOpenDocs((docs) => (docs.some((d) => d.key === output.key) ? docs : [...docs, output]));
 				setActiveKey(output.key);
@@ -74,7 +78,9 @@ export function App() {
 						onClose={(key) =>
 							setOpenDocs((docs) => {
 								const next = docs.filter((doc) => doc.key !== key);
+
 								if (activeKey === key) setActiveKey(next.at(-1)?.key ?? null);
+
 								return next;
 							})
 						}
