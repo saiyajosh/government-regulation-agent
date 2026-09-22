@@ -1,0 +1,27 @@
+name: Evals
+
+# On demand only: evals run the agents against the live model, so they spend
+# tokens and can fail without a code change. Trigger from the Actions tab or
+# with `gh workflow run evals.yml --ref <branch>`.
+on:
+  workflow_dispatch:
+
+jobs:
+  evals:
+    name: evals
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CLOUDFLARE_API_KEY: ${{ secrets.CLOUDFLARE_API_KEY }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_GATEWAY_ID: ${{ vars.CLOUDFLARE_GATEWAY_ID }}
+      CLOUDFLARE_AI_GATEWAY_BYOK_ALIAS: ${{ vars.CLOUDFLARE_AI_GATEWAY_BYOK_ALIAS }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm evals
