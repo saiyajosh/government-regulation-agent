@@ -132,19 +132,23 @@
     @apply font-sans;
     }
 }
-/* Passage highlights (see src/client/highlights.ts). Cited quotes read as a
-   marker pen; retrieved search chunks are a fainter wash underneath. */
+/* Passage highlights (see src/client/highlights.ts). The variables feed both
+   the ::highlight() paint and the legend swatches in the document panel, so
+   the two cannot drift apart. Cited quotes are a translucent blue; retrieved
+   search chunks are a fainter green wash underneath. */
+:root {
+	--highlight-cited: color-mix(in oklab, var(--color-sky-400) 45%, transparent);
+	--highlight-retrieved: color-mix(in oklab, var(--color-emerald-300) 40%, transparent);
+}
+.dark {
+	--highlight-cited: color-mix(in oklab, var(--color-sky-400) 50%, transparent);
+	--highlight-retrieved: color-mix(in oklab, var(--color-emerald-400) 30%, transparent);
+}
 ::highlight(cited-passage) {
-	background-color: color-mix(in oklab, var(--color-amber-300) 55%, transparent);
+	background-color: var(--highlight-cited);
 	color: inherit;
 }
 ::highlight(retrieved-passage) {
-	background-color: color-mix(in oklab, var(--color-emerald-200) 40%, transparent);
+	background-color: var(--highlight-retrieved);
 	color: inherit;
-}
-.dark ::highlight(cited-passage) {
-	background-color: color-mix(in oklab, var(--color-amber-500) 35%, transparent);
-}
-.dark ::highlight(retrieved-passage) {
-	background-color: color-mix(in oklab, var(--color-emerald-500) 20%, transparent);
 }

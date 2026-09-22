@@ -8,7 +8,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { applyHighlights, clearHighlights, supportsHighlights, type Passage } from './highlights.ts';
 import { useCompiledMdx } from './mdx.tsx';
-import { LEVELS, LevelBadge } from './LevelBadge.tsx';
+import { jurisdictionLabel, LevelBadge } from './LevelBadge.tsx';
 import type { DocumentRecord } from './types.ts';
 
 // One tab per document the agent has opened via open_law. The panel has no
@@ -112,8 +112,7 @@ function DocumentView({ doc, passages }: { doc: DocumentRecord; passages: Passag
 				<h2 className="font-heading text-2xl font-semibold tracking-tight">{doc.title}</h2>
 				<div className="flex flex-wrap items-center gap-1.5">
 					<LevelBadge level={doc.level} />
-					{/* Federal documents name their jurisdiction "Federal" too; one badge is enough. */}
-					{doc.jurisdiction.toLowerCase() !== LEVELS[doc.level]?.label.toLowerCase() && (
+					{jurisdictionLabel(doc.level, doc.jurisdiction) && (
 						<Badge variant="secondary">{doc.jurisdiction}</Badge>
 					)}
 					{doc.citation && <Badge variant="outline">{doc.citation}</Badge>}
@@ -134,15 +133,21 @@ function DocumentView({ doc, passages }: { doc: DocumentRecord; passages: Passag
 			<Separator className="my-5" />
 			{supportsHighlights() && (cited.length > 0 || retrieved > 0) && (
 				<div className="sticky top-2 z-10 mb-4 flex w-fit items-center gap-1 rounded-full border bg-background/95 py-1 pr-1 pl-3 text-xs shadow-sm backdrop-blur">
-					<Highlighter className="size-3.5 text-amber-600 dark:text-amber-400" />
-					<span>
+					<Highlighter className="size-3.5 text-muted-foreground" />
+					{/* The swatches are the legend: each one is the color that kind of passage is painted in. */}
+					<span className="flex items-center gap-2">
 						{cited.length > 0 && (
-							<span>
+							<span className="flex items-center gap-1">
+								<Swatch kind="cited" />
 								{cited.length} cited{cursor >= 0 && ` (${cursor + 1}/${cited.length})`}
 							</span>
 						)}
-						{cited.length > 0 && retrieved > 0 && <span className="text-muted-foreground"> · </span>}
-						{retrieved > 0 && <span className="text-muted-foreground">{retrieved} retrieved</span>}
+						{retrieved > 0 && (
+							<span className="flex items-center gap-1 text-muted-foreground">
+								<Swatch kind="retrieved" />
+								{retrieved} retrieved
+							</span>
+						)}
 					</span>
 					{cited.length > 1 && (
 						<span className="ml-1 flex">
@@ -188,5 +193,15 @@ function DocumentView({ doc, passages }: { doc: DocumentRecord; passages: Passag
 				</div>
 			)}
 		</article>
+	);
+}
+
+function Swatch({ kind }: { kind: 'cited' | 'retrieved' }) {
+	return (
+		<span
+			aria-hidden
+			className="inline-block size-3 rounded-sm border border-foreground/10"
+			style={{ backgroundColor: `var(--highlight-${kind})` }}
+		/>
 	);
 }
