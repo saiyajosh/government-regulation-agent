@@ -27,7 +27,9 @@ app.route('/agents/explain', createAgentRouter(ExplainAgent) as unknown as Hono)
 app.get('/api/documents/:key{.+}', async (c) => {
 	const bucket = (c.env as Env).DOCUMENTS_BUCKET;
 	const doc = await getDocument(bucket, c.req.param('key'));
+
 	if (!doc) return c.json({ error: 'not found' }, 404);
+
 	return c.json(doc);
 });
 

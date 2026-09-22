@@ -1,4 +1,5 @@
 'use agent';
+
 import { getCloudflareContext } from '@flue/runtime/cloudflare';
 import { defineTool, setProvider, useDataWriter, useModel, useTool } from '@flue/runtime';
 import { object, string } from 'valibot';
@@ -18,6 +19,7 @@ const searchLaws = defineTool({
 	input: object({ query: string() }),
 	async run({ data }) {
 		const results = await searchDocuments(bucket(), data.query);
+
 		return {
 			output: results.map(({ key, title, jurisdiction, citation }) => ({
 				key,
@@ -39,6 +41,7 @@ function openLaw(writeOpenDocument: WriteOpenDocument) {
 		input: object({ key: string() }),
 		async run({ data }) {
 			const doc = await getDocument(bucket(), data.key);
+
 			if (!doc) return { output: { error: `No document found for key "${data.key}".` } };
 
 			writeOpenDocument({ key: doc.key, title: doc.title });
@@ -64,6 +67,7 @@ export function RegulationAgent() {
 	const writeOpenDocument = useDataWriter('openDocument', {
 		schema: object({ key: string(), title: string() }),
 	});
+
 	useTool(searchLaws);
 	useTool(openLaw(writeOpenDocument));
 
