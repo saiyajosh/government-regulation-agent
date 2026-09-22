@@ -13,7 +13,10 @@ and React.
 
 - `src/agents/` — agent modules. A module whose first line is the `'use agent'` directive exports agents: every exported capitalized function is one, and the function name is its durable identity.
 - `src/app.ts` — the route map; every route (agent, REST API) is mounted here explicitly.
-- `src/lib/documents.ts` — R2-backed document library: list/get/search Markdown documents with frontmatter metadata.
+- `src/lib/documents.ts` — R2-backed document library: get/put/search Markdown documents with frontmatter metadata, plus the `Library` interface the agent tools depend on (`cloudflareLibrary` for the Worker, `memoryLibrary` for tests and evals).
+- `src/agents/regulation.ts` — the Regulation agent's tools and instructions, parameterized on a `Library`; `regulation-agent.ts` only wires the Cloudflare bindings in.
+- `src/test/` — in-memory fakes for the R2, AI Search, and KV bindings, and the `cloudflare:workers` stub Vitest aliases in.
+- `src/evals/` — fixture corpus, harness, and eval cases.
 - `src/client/` — the chat + tabbed "Resources" (MDX document viewer) React frontend, built as static assets.
 - `src/cloudflare.ts` — Worker-level exports and non-HTTP handlers.
 - `wrangler.jsonc` — Worker config: R2 bucket binding, Workers AI binding, static assets, and Durable Object migrations (one per agent).
@@ -24,6 +27,8 @@ and React.
 - `pnpm dev` — start the dev server (serves the frontend and the API on the same origin).
 - `pnpm deploy` — build and deploy the Worker.
 - `pnpm check:types` — typecheck.
+- `pnpm test` — unit tests (Vitest, no network, no Cloudflare bindings; `src/**/*.test.ts`).
+- `pnpm evals` — agent evals against the live model over a fixture corpus (`src/evals/*.eval.ts`); needs the CLOUDFLARE_* gateway credentials in `.env`.
 - `pnpm exec flue docs search <query>` — search the Flue docs from the terminal (then `flue docs read <path>`).
 - `pnpm exec flue add` — list blueprints for adding channels, sandboxes, and databases.
 
