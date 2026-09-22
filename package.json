@@ -7,6 +7,9 @@
 		"build": "vite build",
 		"deploy": "vite build && wrangler deploy",
 		"check:types": "tsc --noEmit",
+		"test": "vitest run",
+		"test:watch": "vitest",
+		"evals": "vitest run --config vitest.evals.config.ts",
 		"types": "wrangler types",
 		"postinstall": "wrangler types",
 		"lint": "oxlint"
@@ -38,13 +41,17 @@
 		"@flue/cli": "^2.1.0",
 		"@flue/vite": "^2.1.0",
 		"@oxlint/plugins": "1.85.0",
+		"@testing-library/dom": "^10.4.2",
+		"@testing-library/react": "^16.3.3",
 		"@types/node": "^22.10.10",
 		"@types/react": "^19.3.0",
 		"@types/react-dom": "^19.3.0",
 		"@vitejs/plugin-react": "^6.1.1",
+		"happy-dom": "^20.14.5",
 		"oxlint": "1.85.0",
 		"typescript": "^7.0.2",
 		"vite": "^8.0.14",
+		"vitest": "^5.0.1",
 		"wrangler": "^4.113.0"
 	}
 }
