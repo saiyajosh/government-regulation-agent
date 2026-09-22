@@ -13,10 +13,14 @@ import { mintConversationId, ownsConversation, requireUser } from './lib/identit
 
 const app = new Hono<{ Bindings: Env; Variables: { userId: string } }>();
 
-// Every API and agent request runs as an anonymous cookie identity. The
+// Conversation and agent requests run as an anonymous cookie identity. The
 // cookie is minted on first contact, so the first request a browser makes
-// (the conversation list) is what establishes who it is.
-app.use('/api/*', async (c, next) => {
+// (the conversation list) is what establishes who it is. The document routes
+// under /api/documents are bearer-token only (SEED_TOKEN) and stay outside
+// this layer: scripts/seed.ts never has a user, and a Worker without
+// COOKIE_SECRET must still accept uploads. In Hono a trailing `/*` also
+// matches the bare path, so this one pattern covers GET/POST /api/conversations.
+app.use('/api/conversations/*', async (c, next) => {
 	c.set('userId', await requireUser(c));
 	await next();
 });
