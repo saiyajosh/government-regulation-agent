@@ -54,7 +54,10 @@ function parseFrontmatter(raw: string) {
 
 		if (separator === -1) continue;
 		const key = line.slice(0, separator).trim();
-		const value = line.slice(separator + 1).trim().replace(/^['"]|['"]$/g, '');
+		const rawValue = line.slice(separator + 1).trim();
+		// renderFrontmatter JSON-quotes values, so a double-quoted value is decoded
+		// the same way to round-trip embedded quotes and backslashes.
+		const value = /^".*"$/.test(rawValue) ? String(JSON.parse(rawValue)) : rawValue.replace(/^'|'$/g, '');
 
 		if (key in meta) meta[key] = value;
 	}
