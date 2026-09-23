@@ -33,7 +33,7 @@ it('grounds a factual answer: searches, opens the right document, highlights ver
 	for (const highlight of highlights) {
 		const doc = FIXTURES.find((fixture) => fixture.key === highlight.key);
 
-		expect(doc, `highlight_passages named an unknown key ${highlight.key}`).toBeDefined();
+		expect(doc, `a highlight named an unknown key ${highlight.key}`).toBeDefined();
 		expect(highlight.passages.length).toBeGreaterThan(0);
 
 		for (const passage of highlight.passages) {

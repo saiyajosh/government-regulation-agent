@@ -57,10 +57,16 @@ export function openedKeys(toolCalls: ToolCall[]) {
 	return toolCalls.flatMap((call) => (call.name === 'open_law' ? [parse(object({ key: string() }), call.input).key] : []));
 }
 
+// Highlights arrive either as highlight_passages calls or as `passages` on an
+// open_law call (the instructions allow both, the second saving a round trip).
 export function highlightCalls(toolCalls: ToolCall[]) {
-	return toolCalls.flatMap((call) =>
-		call.name === 'highlight_passages' ? [parse(object({ key: string(), passages: array(string()) }), call.input)] : [],
-	);
+	return toolCalls.flatMap((call) => {
+		if (call.name === 'highlight_passages') return [parse(object({ key: string(), passages: array(string()) }), call.input)];
+		if (call.name !== 'open_law') return [];
+		const input = parse(object({ key: string(), passages: optional(array(string())) }), call.input);
+
+		return input.passages?.length ? [{ key: input.key, passages: input.passages }] : [];
+	});
 }
 
 // Whitespace-insensitive containment check for "verbatim" quotes.
