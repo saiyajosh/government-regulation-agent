@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { memoryLibrary } from '../lib/documents.ts';
+import { READ_CHUNK, WHOLE_BODY_LIMIT } from '../lib/passages.ts';
 import { regulationTools } from './regulation.ts';
 
 const DOCS = [
@@ -12,7 +13,7 @@ const DOCS = [
 		level: 'federal',
 		authors: '',
 		issuingBody: 'EPA',
-		body: 'A facility that emits 25,000 metric tons CO2e or more per year must report.\n\nOther text.',
+		body: 'A facility that emits 25,000 units per year CO2e or more per year must report.\n\nOther text.',
 	},
 	{
 		key: 'regional/baaqmd/6-1.md',
@@ -24,6 +25,18 @@ const DOCS = [
 		authors: '',
 		issuingBody: 'BAAQMD',
 		body: 'No person shall emit particulate matter exceeding the limits of this rule.',
+	},
+	{
+		key: 'federal/fr/long.md',
+		title: 'A long rule',
+		jurisdiction: 'Federal',
+		citation: '89 FR 1',
+		sourceUrl: '',
+		level: 'federal',
+		authors: '',
+		issuingBody: 'EPA',
+		// Well past WHOLE_BODY_LIMIT, with one distinctive sentence buried deep inside.
+		body: `${'Preamble filler text. '.repeat(3000)}The applicability threshold is 25,000 units per year.${' Trailing filler text.'.repeat(3000)}`,
 	},
 ];
 
@@ -51,13 +64,55 @@ describe('regulation tools', () => {
 		expect(await tools.searchLaws.run(context({ query: 'emit particulate matter limits', level: 'state' as const }))).toEqual({ output: [] });
 	});
 
-	it('open_law returns the full document and tells the client to open it', async () => {
+	it('open_law returns a short document whole and tells the client to open it', async () => {
 		const result = await tools.openLaw.run(context({ key: 'federal/cfr/98-2.md' }));
 
 		expect(result).toEqual({
-			output: expect.objectContaining({ key: 'federal/cfr/98-2.md', title: 'Who must report', body: DOCS[0].body, sourceUrl: 'https://example.test/98.2' }),
+			output: expect.objectContaining({ key: 'federal/cfr/98-2.md', title: 'Who must report', complete: true, body: DOCS[0].body, length: DOCS[0].body.length, sourceUrl: 'https://example.test/98.2' }),
 		});
 		expect(opened).toEqual([{ key: 'federal/cfr/98-2.md', title: 'Who must report' }]);
+	});
+
+	it('open_law returns only windows around the requested passages of a long document', async () => {
+		const body = DOCS[2].body;
+
+		expect(body.length).toBeGreaterThan(WHOLE_BODY_LIMIT);
+
+		const result = await tools.openLaw.run(context({ key: 'federal/fr/long.md', passages: ['applicability threshold is 25,000', 'not in the document'] }));
+
+		expect(result).toEqual({
+			output: expect.objectContaining({ key: 'federal/fr/long.md', complete: false, length: body.length, passages: [expect.objectContaining({ text: expect.stringContaining('25,000 units per year') })] }),
+		});
+		expect(JSON.stringify(result).length).toBeLessThan(READ_CHUNK);
+		expect(opened.at(-1)).toEqual({ key: 'federal/fr/long.md', title: 'A long rule' });
+	});
+
+	it('open_law falls back to the opening page of a long document when no passage matches', async () => {
+		const result = await tools.openLaw.run(context({ key: 'federal/fr/long.md' }));
+
+		expect(result).toEqual({
+			output: expect.objectContaining({ complete: false, offset: 0, end: READ_CHUNK, length: DOCS[2].body.length, text: DOCS[2].body.slice(0, READ_CHUNK) }),
+		});
+	});
+
+	it('read_law pages by offset and finds phrases without opening anything', async () => {
+		const before = opened.length;
+		const body = DOCS[2].body;
+
+		expect(await tools.readLaw.run(context({ key: 'federal/fr/long.md', offset: READ_CHUNK }))).toEqual({
+			output: { key: 'federal/fr/long.md', offset: READ_CHUNK, end: READ_CHUNK * 2, length: body.length, text: body.slice(READ_CHUNK, READ_CHUNK * 2) },
+		});
+		expect(await tools.readLaw.run(context({ key: 'federal/fr/long.md', offset: body.length + 50 }))).toEqual({
+			output: expect.objectContaining({ offset: body.length, end: body.length, text: '' }),
+		});
+
+		const found = await tools.readLaw.run(context({ key: 'federal/fr/long.md', find: 'APPLICABILITY THRESHOLD' }));
+
+		expect(found).toEqual({
+			output: { key: 'federal/fr/long.md', find: 'APPLICABILITY THRESHOLD', matches: 1, passages: [expect.objectContaining({ text: expect.stringContaining('25,000 units per year') })] },
+		});
+		expect(await tools.readLaw.run(context({ key: 'nope.md', find: 'x' }))).toEqual({ output: { error: 'No document found for key "nope.md".' } });
+		expect(opened).toHaveLength(before);
 	});
 
 	it('open_law reports an unknown key without opening anything', async () => {
