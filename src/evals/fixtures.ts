@@ -1,3 +1,4 @@
+import type { WebResult } from '../agents/explain.ts';
 import type { DocumentRecord } from '../lib/documents.ts';
 
 // A small, self-contained corpus for evals. The texts are condensed
@@ -108,5 +109,18 @@ export const FIXTURES: DocumentRecord[] = [
 			'',
 			'15.37.040 The Director may grant an exemption where the applicant establishes that there is no all-electric prescriptive compliance pathway for the building under the California Energy Code, or that the building is a restaurant requiring gas for commercial cooking.',
 		].join('\n'),
+	},
+];
+
+// What the fixture web searcher returns for any query: a fact none of the
+// documents state (the reporting penalty amount), so an answer containing it
+// must have come through search_web.
+export const WEB_FIXTURES: WebResult[] = [
+	{
+		title: 'Greenhouse Gas Reporting Program: Enforcement',
+		url: 'https://www.epa.gov/ghgreporting/enforcement',
+		publishedDate: '2024-03-01',
+		excerpt:
+			'Failure to submit an annual report under 40 CFR Part 98 is a violation of the Clean Air Act. EPA may assess civil penalties of up to $51,796 per day per violation, adjusted annually for inflation.',
 	},
 ];

@@ -1,14 +1,26 @@
-import { init, type Agent } from '@flue/runtime';
+import { init, useInitialData, type Agent } from '@flue/runtime';
 import { array, object, optional, parse, string } from 'valibot';
 import { memoryLibrary } from '../lib/documents.ts';
+import { explainInput, type ExplainInput } from '../lib/explain.ts';
+import { explainAgent, type WebResult } from '../agents/explain.ts';
 import { regulationAgent } from '../agents/regulation.ts';
-import { FIXTURES } from './fixtures.ts';
+import { FIXTURES, WEB_FIXTURES } from './fixtures.ts';
 
 // The Regulation agent over the fixture corpus: the same body the Worker
 // runs, minus the Cloudflare bindings. Registered under start() by name.
 export function RegulationEval() {
 	return regulationAgent(memoryLibrary(FIXTURES));
 }
+
+// The Explain agent over a fixture web searcher: every query returns the
+// same official-looking pages, so a web-backed answer is checkable.
+export function ExplainEval() {
+	return explainAgent(useInitialData<ExplainInput | undefined>(), async () => WEB_FIXTURES);
+}
+
+ExplainEval.initialData = explainInput;
+
+export type { WebResult };
 
 export interface ToolCall {
 	name: string;
