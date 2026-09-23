@@ -1,7 +1,8 @@
 import { defineTool, useDataWriter, useModel, useTool } from '@flue/runtime';
-import { array, object, optional, picklist, string } from 'valibot';
+import { array, number, object, optional, picklist, string } from 'valibot';
 import type { Library } from '../lib/documents.ts';
 import { GATEWAY_MODEL } from '../lib/gateway.ts';
+import { findPassages, READ_CHUNK, readWindow, WHOLE_BODY_LIMIT } from '../lib/passages.ts';
 
 // The Regulation agent's tools and instructions, parameterized on the document
 // library so they run against AI Search + R2 in the Worker and against an
@@ -22,6 +23,7 @@ export function regulationAgent(library: Library) {
 
 	useTool(tools.searchLaws);
 	useTool(tools.openLaw);
+	useTool(tools.readLaw);
 	useTool(tools.highlightPassages);
 
 	return REGULATION_INSTRUCTIONS;
@@ -69,13 +71,21 @@ export function regulationTools(library: Library, writeOpenDocument: WriteOpenDo
 		},
 	});
 
+	// Opens the document for the reader but hands the model only what it asked
+	// for: a short document whole, otherwise the passages around the quotes it
+	// passed (or the opening page when it passed none). Library documents run
+	// to several megabytes, so the full body never travels in a tool result;
+	// read_law pages through the rest on demand.
 	const openLaw = defineTool({
 		name: 'open_law',
 		description: [
 			'Open a specific document by its key in the Resources panel so the user can read the full,',
-			'sourced text, and return that text so you can quote or reason about it. If you already know',
-			'which passages matter (for example from search_laws excerpts), pass them as verbatim quotes',
-			'in `passages` and they are highlighted for the reader as the document opens.',
+			'sourced text. Returns its metadata and, for a short document, its whole text. For a longer',
+			'document it returns only the passages around each verbatim quote in `passages` (which are',
+			'also highlighted for the reader as the document opens), or the first',
+			`${READ_CHUNK} characters when no passages are given; use read_law to read more of it.`,
+			'Pass the search_laws excerpts you plan to rely on as `passages` so the relevant text',
+			'comes back in one call.',
 		].join(' '),
 		input: object({ key: string(), passages: optional(array(string())) }),
 		async run({ data }) {
@@ -95,9 +105,31 @@ export function regulationTools(library: Library, writeOpenDocument: WriteOpenDo
 					level: doc.level,
 					authors: doc.authors,
 					issuingBody: doc.issuingBody,
-					body: doc.body,
+					length: doc.body.length,
+					...excerptFor(doc.body, data.passages ?? []),
 				},
 			};
+		},
+	});
+
+	const readLaw = defineTool({
+		name: 'read_law',
+		description: [
+			'Read more of a document that open_law returned only part of. Pass `find` to get the',
+			'passages around every place a word or phrase appears in it (case-insensitive), or',
+			`\`offset\` to read the next ${READ_CHUNK} characters from that character position (open_law and`,
+			'read_law report the document length and the end of each window). Read only what the',
+			'question needs: prefer `find` with a distinctive phrase over paging from the start.',
+		].join(' '),
+		input: object({ key: string(), find: optional(string()), offset: optional(number()) }),
+		async run({ data }) {
+			const doc = await library.get(data.key);
+
+			if (!doc) return { output: { error: `No document found for key "${data.key}".` } };
+
+			if (data.find) return { output: { key: doc.key, ...findPassages(doc.body, data.find) } };
+
+			return { output: { key: doc.key, ...readWindow(doc.body, data.offset) } };
 		},
 	});
 
@@ -118,7 +150,19 @@ export function regulationTools(library: Library, writeOpenDocument: WriteOpenDo
 		},
 	});
 
-	return { searchLaws, openLaw, highlightPassages };
+	return { searchLaws, openLaw, readLaw, highlightPassages };
+}
+
+// What open_law carries back: the whole body when it is short, otherwise a
+// window around each requested passage that occurs in it, falling back to the
+// opening page so the model always has something to read.
+function excerptFor(body: string, passages: string[]) {
+	if (body.length <= WHOLE_BODY_LIMIT) return { complete: true, body };
+	const found = passages.flatMap((passage) => findPassages(body, passage, 1).passages);
+
+	if (found.length === 0) return { complete: false, ...readWindow(body, 0) };
+
+	return { complete: false, passages: found };
 }
 
 export const REGULATION_INSTRUCTIONS = [
@@ -137,8 +181,11 @@ export const REGULATION_INSTRUCTIONS = [
 	'you must show the user those sources. Follow this process on every substantive question:',
 	'1) Call search_laws (rephrase or narrow the query if the first pass misses). 2) Call open_law',
 	'on every document whose passages your answer actually relies on, so the full official text',
-	'appears in the Resources panel next to your reply, and read what comes back rather than',
-	'relying on the search excerpt or on memory. 3) Once you know which sentences answer the',
+	'appears in the Resources panel next to your reply, passing the search excerpts you plan to',
+	'rely on as `passages`, and read what comes back rather than relying on the search excerpt or',
+	'on memory. A long document comes back as windows around those passages rather than whole;',
+	'when the answer may sit elsewhere in it, call read_law (`find` a distinctive phrase, or page',
+	'by `offset`) and read only as much as the question needs. 3) Once you know which sentences answer the',
 	'question, call highlight_passages with those exact verbatim quotes (or pass them as',
 	'`passages` to open_law) so they are marked in the open document. 4) Write the answer from',
 	'what those documents say, and name each document (title and citation) it draws on. Do this',

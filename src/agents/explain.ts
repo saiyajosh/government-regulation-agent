@@ -2,6 +2,7 @@ import { defineTool, useModel, useTool } from '@flue/runtime';
 import { number, object, optional, string } from 'valibot';
 import type { ExplainInput } from '../lib/explain.ts';
 import { GATEWAY_MODEL } from '../lib/gateway.ts';
+import { findPassages, READ_CHUNK, readWindow, WHOLE_BODY_LIMIT } from '../lib/passages.ts';
 
 // The Explain agent's tools and instructions, parameterized on the web
 // searcher so they run against Exa in the Worker and against a fixture
@@ -45,12 +46,6 @@ export const OFFICIAL_DOMAINS = [
 // the prompt carries a window around the selection instead and the rest is
 // a read_source call away.
 export const EXCERPT_WINDOW = 3000;
-
-const WHOLE_BODY_LIMIT = 12_000;
-
-const READ_CHUNK = 6000;
-
-const MATCH_WINDOW = 800;
 
 export function explainAgent(input: ExplainInput | undefined, searchWeb: WebSearcher | null) {
 	useModel(GATEWAY_MODEL);
@@ -100,17 +95,9 @@ export function explainTools(input: ExplainInput, searchWeb: WebSearcher | null)
 		].join(' '),
 		input: object({ find: optional(string()), offset: optional(number()) }),
 		async run({ data }) {
-			if (data.find) return { output: findInSource(input.body, data.find) };
-			const offset = Math.max(0, Math.min(data.offset ?? 0, input.body.length));
+			if (data.find) return { output: findPassages(input.body, data.find) };
 
-			return {
-				output: {
-					offset,
-					end: Math.min(offset + READ_CHUNK, input.body.length),
-					length: input.body.length,
-					text: input.body.slice(offset, offset + READ_CHUNK),
-				},
-			};
+			return { output: readWindow(input.body, data.offset) };
 		},
 	});
 
@@ -149,19 +136,6 @@ export function excerptAround(body: string, selection: string, context: string) 
 		end,
 		text: `${start > 0 ? '…' : ''}${body.slice(start, end)}${end < body.length ? '…' : ''}`,
 	};
-}
-
-function findInSource(body: string, needle: string) {
-	const haystack = body.toLowerCase();
-	const term = needle.toLowerCase();
-	const hits: { offset: number; text: string }[] = [];
-
-	for (let at = haystack.indexOf(term); at !== -1 && hits.length < 5; at = haystack.indexOf(term, at + term.length)) {
-		const start = Math.max(0, at - MATCH_WINDOW);
-		hits.push({ offset: start, text: body.slice(start, at + term.length + MATCH_WINDOW) });
-	}
-
-	return { find: needle, matches: hits.length, passages: hits };
 }
 
 // Exa search restricted to official domains, with query-relevant highlights
