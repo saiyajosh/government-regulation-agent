@@ -133,8 +133,12 @@ function DocumentView({ doc, passages }: { doc: DocumentRecord; passages: Passag
 	const { Content, error } = useCompiledMdx(doc.body);
 	const proseRef = useRef<HTMLDivElement>(null);
 	const [cited, setCited] = useState<Range[]>([]);
-	const [retrieved, setRetrieved] = useState(0);
+	const [retrieved, setRetrieved] = useState<Range[]>([]);
 	const [cursor, setCursor] = useState(-1);
+	// Navigation walks the cited passages; a document with nothing cited yet
+	// (a search hit the reply has not leaned on) walks the retrieved ones.
+	const jumps = cited.length > 0 ? cited : retrieved;
+	const jumpKind = cited.length > 0 ? 'cited' : 'retrieved';
 
 	// App.tsx rebuilds the passage list from `agent.messages` on every stream
 	// chunk, so the array identity churns while its contents rarely change.
@@ -153,22 +157,27 @@ function DocumentView({ doc, passages }: { doc: DocumentRecord; passages: Passag
 		if (!root || !Content) return;
 		const result = applyHighlights(root, stablePassages);
 		setCited(result.anchors);
-		setRetrieved(result.matched.retrieved);
-		setCursor((current) => (current < result.anchors.length ? current : -1));
+		setRetrieved(result.retrievedAnchors);
+		setCursor((current) => (current < Math.max(result.anchors.length, result.retrievedAnchors.length) ? current : -1));
 
 		return clearHighlights;
 	}, [Content, stablePassages]);
 
-	// The first cited passage scrolls into view on its own; later ones are a
-	// click away. Ranges have no scrollIntoView, so the nearest element stands in.
-	// Only `cited` is a dependency on purpose: a jump should not re-fire when
-	// the cursor moves.
+	// The first passage scrolls into view on its own; later ones are a click
+	// away. Ranges have no scrollIntoView, so the nearest element stands in.
+	// Only the anchor lists are dependencies on purpose: a jump should not
+	// re-fire when the cursor moves, but it does when the first citation
+	// arrives for a document that was showing retrieved passages.
+	const lastJumpKind = useRef(jumpKind);
 	useEffect(() => {
-		if (cursor === -1 && cited.length > 0) jumpTo(0);
-	}, [cited]);
+		const switched = jumpKind !== lastJumpKind.current;
+		lastJumpKind.current = jumpKind;
+
+		if (jumps.length > 0 && (cursor === -1 || switched)) jumpTo(0);
+	}, [cited, retrieved]);
 
 	function jumpTo(index: number) {
-		const range = cited[index];
+		const range = jumps[index];
 
 		if (!range) return;
 		setCursor(index);
@@ -181,7 +190,7 @@ function DocumentView({ doc, passages }: { doc: DocumentRecord; passages: Passag
 		<article className="mx-auto max-w-3xl p-6">
 			<DocumentHeader doc={doc} />
 			<Separator className="my-5" />
-			{supportsHighlights() && (cited.length > 0 || retrieved > 0) && (
+			{supportsHighlights() && jumps.length > 0 && (
 				<div className="sticky top-2 z-10 mb-4 flex w-fit items-center gap-1 rounded-full border bg-background/95 py-1 pr-1 pl-3 text-xs shadow-sm backdrop-blur">
 					<Highlighter className="size-3.5 text-muted-foreground" />
 					{/* The swatches are the legend: each one is the color that kind of passage is painted in. */}
@@ -192,21 +201,21 @@ function DocumentView({ doc, passages }: { doc: DocumentRecord; passages: Passag
 								{cited.length} cited{cursor >= 0 && ` (${cursor + 1}/${cited.length})`}
 							</span>
 						)}
-						{retrieved > 0 && (
+						{retrieved.length > 0 && (
 							<span className="flex items-center gap-1 text-muted-foreground">
 								<Swatch kind="retrieved" />
-								{retrieved} retrieved
+								{retrieved.length} retrieved{jumpKind === 'retrieved' && cursor >= 0 && ` (${cursor + 1}/${retrieved.length})`}
 							</span>
 						)}
 					</span>
-					{cited.length > 1 && (
+					{jumps.length > 1 && (
 						<span className="ml-1 flex">
 							<Button
 								variant="ghost"
 								size="icon"
 								className="size-6"
-								aria-label="Previous cited passage"
-								onClick={() => jumpTo((cursor - 1 + cited.length) % cited.length)}
+								aria-label={`Previous ${jumpKind} passage`}
+								onClick={() => jumpTo((cursor - 1 + jumps.length) % jumps.length)}
 							>
 								<ChevronUp className="size-3.5" />
 							</Button>
@@ -214,8 +223,8 @@ function DocumentView({ doc, passages }: { doc: DocumentRecord; passages: Passag
 								variant="ghost"
 								size="icon"
 								className="size-6"
-								aria-label="Next cited passage"
-								onClick={() => jumpTo((cursor + 1) % cited.length)}
+								aria-label={`Next ${jumpKind} passage`}
+								onClick={() => jumpTo((cursor + 1) % jumps.length)}
 							>
 								<ChevronDown className="size-3.5" />
 							</Button>

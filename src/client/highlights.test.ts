@@ -40,6 +40,7 @@ describe('highlights', () => {
 		expect(supportsHighlights()).toBe(false);
 		expect(applyHighlights(root, [{ text: 'Some text that is long enough.', kind: 'cited' }])).toEqual({
 			anchors: [],
+			retrievedAnchors: [],
 			matched: { cited: 0, retrieved: 0 },
 		});
 	});
@@ -81,6 +82,10 @@ describe('highlights', () => {
 
 		expect(result.matched).toEqual({ cited: 0, retrieved: 1 });
 		expect(registry.get('retrieved-passage')?.ranges.map((range) => range.toString())).toEqual([first, second]);
+		// One anchor per retrieved passage, at its first span, so a document with
+		// nothing cited can still scroll to what the search found.
+		expect(result.anchors).toEqual([]);
+		expect(result.retrievedAnchors.map((range) => range.toString())).toEqual([first]);
 	});
 
 	it('clearHighlights removes both registered highlights', () => {
