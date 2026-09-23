@@ -20,7 +20,9 @@ it('says plainly when the library does not cover the question instead of answeri
 	expect(toolCalls.map((call) => call.name)).toContain('search_laws');
 	// The gap is stated about San Jose specifically, and nothing was highlighted
 	// that does not exist in the library.
-	expect(reply.text).toMatch(/San Jose[^.]{0,160}\b(no|not|nothing|none)\b|\b(no|not|nothing|none)\b[^.]{0,160}San Jose/i);
+	// "no", "not", "nothing", "none", or a contraction such as "doesn't", within
+	// the same sentence as San Jose.
+	expect(reply.text).toMatch(/San Jose[^.]{0,160}(\b(no|not|nothing|none)\b|n't\b)|(\b(no|not|nothing|none)\b|n't\b)[^.]{0,160}San Jose/i);
 	expect(highlightedKeys(toolCalls).every((key) => FIXTURES.some((doc) => doc.key === key))).toBe(true);
 });
 
