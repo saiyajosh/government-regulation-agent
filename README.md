@@ -34,6 +34,11 @@ For the deployed Worker, the non-secret values are `vars` in `wrangler.jsonc`
 and the secrets are set with `wrangler secret put CLOUDFLARE_API_KEY` and
 `wrangler secret put COOKIE_SECRET`.
 
+Optionally, `EXA_API_KEY` (an [Exa](https://exa.ai) key; new accounts start
+with free credits) lets the explain agent fall back to a web search over
+official government domains when the highlighted document does not answer the
+question. Without it the explain agent answers from the document alone.
+
 ## Identity and conversation history
 
 There is no login. Each browser gets an anonymous id in a signed, HttpOnly
