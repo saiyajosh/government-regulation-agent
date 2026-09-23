@@ -53,20 +53,20 @@ export function searchCalls(toolCalls: ToolCall[]) {
 	);
 }
 
-export function openedKeys(toolCalls: ToolCall[]) {
-	return toolCalls.flatMap((call) => (call.name === 'open_law' ? [parse(object({ key: string() }), call.input).key] : []));
+export function readKeys(toolCalls: ToolCall[]) {
+	return toolCalls.flatMap((call) => (call.name === 'read_law' ? [parse(object({ key: string() }), call.input).key] : []));
 }
 
-// Highlights arrive either as highlight_passages calls or as `passages` on an
-// open_law call (the instructions allow both, the second saving a round trip).
 export function highlightCalls(toolCalls: ToolCall[]) {
-	return toolCalls.flatMap((call) => {
-		if (call.name === 'highlight_passages') return [parse(object({ key: string(), passages: array(string()) }), call.input)];
-		if (call.name !== 'open_law') return [];
-		const input = parse(object({ key: string(), passages: optional(array(string())) }), call.input);
+	return toolCalls.flatMap((call) =>
+		call.name === 'highlight_passages' ? [parse(object({ key: string(), passages: array(string()) }), call.input)] : [],
+	);
+}
 
-		return input.passages?.length ? [{ key: input.key, passages: input.passages }] : [];
-	});
+// The documents the reply is grounded in: the client opens the top search
+// matches itself, so the model's own signal of reliance is highlight_passages.
+export function highlightedKeys(toolCalls: ToolCall[]) {
+	return highlightCalls(toolCalls).map((call) => call.key);
 }
 
 // Whitespace-insensitive containment check for "verbatim" quotes.
