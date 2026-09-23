@@ -61,7 +61,7 @@ export function explainAgent(input: ExplainInput | undefined, searchWeb: WebSear
 	return [
 		'You answer exactly one question about a passage the reader highlighted.',
 		'The passage comes either from a legal document in the library or from a reply the research assistant gave earlier in this session; the <document> tag says which.',
-		'Answer from the document first. The prompt carries only the part of the document around the highlight; when the answer may sit elsewhere in it, call read_source to read more before deciding the document does not answer.',
+		'Answer from the document first. The prompt carries only the part of the document around the highlight; when the answer may sit elsewhere in it, call read_source to read more before deciding the document does not answer. When several terms or regions are worth reading, issue all of those read_source calls together in one turn rather than one at a time.',
 		searchWeb
 			? 'If the document itself does not settle the question, call search_web, which searches only official government sites, and answer from what it returns. Say plainly which part of your answer comes from the document and which from the web, and name each web source by its title. Do not search when the document already answers.'
 			: 'Do not use outside knowledge and do not speculate about other laws.',

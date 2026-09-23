@@ -22,7 +22,7 @@ export default defineConfig({
 					// Transform @flue/runtime through Vite so the `cloudflare:workers`
 					// alias above reaches its import; Node's own loader cannot resolve it.
 					server: { deps: { inline: [/@flue\/runtime/] } },
-					include: ['src/lib/**/*.test.ts', 'src/agents/**/*.test.ts', 'src/*.test.ts'],
+					include: ['src/lib/**/*.test.ts', 'src/agents/**/*.test.ts', 'src/evals/**/*.test.ts', 'src/*.test.ts'],
 				},
 			},
 			{

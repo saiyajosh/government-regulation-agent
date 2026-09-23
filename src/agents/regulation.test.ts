@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { memoryLibrary } from '../lib/documents.ts';
 import { READ_CHUNK, WHOLE_BODY_LIMIT } from '../lib/passages.ts';
-import { regulationTools } from './regulation.ts';
+import { REGULATION_INSTRUCTIONS, regulationTools } from './regulation.ts';
 
 const DOCS = [
 	{
@@ -124,5 +124,21 @@ describe('regulation tools', () => {
 
 	it('highlight_passages echoes the count and does nothing else', async () => {
 		expect(await tools.highlightPassages.run(context({ key: 'k', passages: ['a', 'b'] }))).toEqual({ output: { key: 'k', highlighted: 2 } });
+	});
+});
+
+// The prompt is what keeps the tool loop short: the runtime already runs one
+// turn's calls in parallel, so the instructions must ask for batched turns.
+describe('regulation instructions', () => {
+	it('ask for independent tool calls to be batched into one turn', () => {
+		expect(REGULATION_INSTRUCTIONS).toMatch(/issue all of those searches together in one turn/);
+		expect(REGULATION_INSTRUCTIONS).toMatch(/Open all of them at once in a single turn, never one per turn/);
+		expect(REGULATION_INSTRUCTIONS).toMatch(/must always go out together in one turn/);
+	});
+
+	it('fold highlights into open_law and make highlight_passages the exception', () => {
+		expect(REGULATION_INSTRUCTIONS).toMatch(/pass the excerpts you plan to rely on as `passages` to each open_law call/);
+		expect(REGULATION_INSTRUCTIONS).toMatch(/Skip this step when open_law already carried every passage/);
+		expect(REGULATION_INSTRUCTIONS).toMatch(/one search turn, one open_law turn \(with passages\), then the answer/);
 	});
 });
