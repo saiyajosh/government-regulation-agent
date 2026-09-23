@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronUp, ExternalLink, Highlighter, X } from 'lucide-react';
+import { ChevronDown, ChevronUp, ExternalLink, Highlighter, Loader2, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -9,23 +9,26 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { applyHighlights, clearHighlights, supportsHighlights, type Passage } from './highlights.ts';
 import { useCompiledMdx } from './mdx.tsx';
 import { jurisdictionLabel, LevelBadge } from './LevelBadge.tsx';
-import type { DocumentRecord } from './types.ts';
+import type { DocumentRecord, OpenDocument } from './types.ts';
 
-// One tab per document the agent has opened via open_law. The panel has no
-// browsable library on purpose: the bucket will hold far too many laws to
-// enumerate, so documents appear only when the agent surfaces them.
+// One tab per open document (see documents.ts for how they get here). The
+// panel has no browsable library on purpose: the bucket will hold far too
+// many laws to enumerate, so documents appear only when a search surfaces
+// them. A tab's text is fetched separately, so it may still be loading.
 export function ResourcesPanel({
 	openDocs,
 	passages,
 	activeKey,
 	onSelect,
 	onClose,
+	onRetry,
 }: {
-	openDocs: DocumentRecord[];
+	openDocs: OpenDocument[];
 	passages: Record<string, Passage[]>;
 	activeKey: string;
 	onSelect: (key: string) => void;
 	onClose: (key: string) => void;
+	onRetry: (key: string) => void;
 }) {
 	return (
 		<Tabs value={activeKey} onValueChange={onSelect} className="min-h-0 gap-0">
@@ -33,6 +36,7 @@ export function ResourcesPanel({
 				<TabsList variant="line" className="h-10 w-full justify-start px-2">
 					{openDocs.map((doc) => (
 						<TabsTrigger key={doc.key} value={doc.key} className="flex-none max-w-64 pr-0.5">
+							{doc.status === 'loading' && <Loader2 className="size-3.5 shrink-0 animate-spin text-muted-foreground" />}
 							<span className="truncate">{doc.title}</span>
 							{/* A button inside a button is invalid HTML, so the close affordance is a span. */}
 							<span
@@ -61,7 +65,11 @@ export function ResourcesPanel({
 			{openDocs.map((doc) => (
 				<TabsContent key={doc.key} value={doc.key} className="min-h-0">
 					<ScrollArea className="h-full">
-						<DocumentView doc={doc} passages={passages[doc.key] ?? []} />
+						{doc.status === 'ready' ? (
+							<DocumentView doc={doc} passages={passages[doc.key] ?? []} />
+						) : (
+							<DocumentPlaceholder doc={doc} onRetry={() => onRetry(doc.key)} />
+						)}
 					</ScrollArea>
 				</TabsContent>
 			))}
@@ -69,12 +77,68 @@ export function ResourcesPanel({
 	);
 }
 
+// The tab while its text is on the way, or after the fetch failed.
+function DocumentPlaceholder({ doc, onRetry }: { doc: OpenDocument; onRetry: () => void }) {
+	return (
+		<article className="mx-auto max-w-3xl p-6" aria-busy={doc.status === 'loading'}>
+			<DocumentHeader doc={doc} />
+			<Separator className="my-5" />
+			{doc.status === 'error' ? (
+				<div className="flex flex-col items-start gap-3 text-sm">
+					<p className="text-destructive">{doc.error}</p>
+					<Button variant="outline" size="sm" onClick={onRetry}>
+						Try again
+					</Button>
+				</div>
+			) : (
+				<div className="flex flex-col gap-3">
+					<Skeleton className="h-4 w-3/4" />
+					<Skeleton className="h-4 w-full" />
+					<Skeleton className="h-4 w-5/6" />
+					<Skeleton className="h-4 w-2/3" />
+				</div>
+			)}
+		</article>
+	);
+}
+
+function DocumentHeader({ doc }: { doc: OpenDocument | DocumentRecord }) {
+	return (
+		<header className="flex flex-col gap-3">
+			<h2 className="font-heading text-2xl font-semibold tracking-tight">{doc.title}</h2>
+			<div className="flex flex-wrap items-center gap-1.5">
+				<LevelBadge level={doc.level} />
+				{jurisdictionLabel(doc.level, doc.jurisdiction) && (
+					<Badge variant="secondary">{doc.jurisdiction}</Badge>
+				)}
+				{doc.citation && <Badge variant="outline">{doc.citation}</Badge>}
+				{doc.issuingBody && <Badge variant="outline">{doc.issuingBody}</Badge>}
+				{doc.sourceUrl && (
+					<Button variant="link" size="sm" className="h-auto px-1" asChild>
+						<a href={doc.sourceUrl} target="_blank" rel="noreferrer">
+							View official source
+							<ExternalLink data-icon="inline-end" />
+						</a>
+					</Button>
+				)}
+			</div>
+			{doc.authors && (
+				<p className="text-sm text-muted-foreground">Authors: {doc.authors}</p>
+			)}
+		</header>
+	);
+}
+
 function DocumentView({ doc, passages }: { doc: DocumentRecord; passages: Passage[] }) {
 	const { Content, error } = useCompiledMdx(doc.body);
 	const proseRef = useRef<HTMLDivElement>(null);
 	const [cited, setCited] = useState<Range[]>([]);
-	const [retrieved, setRetrieved] = useState(0);
+	const [retrieved, setRetrieved] = useState<Range[]>([]);
 	const [cursor, setCursor] = useState(-1);
+	// Navigation walks the cited passages; a document with nothing cited yet
+	// (a search hit the reply has not leaned on) walks the retrieved ones.
+	const jumps = cited.length > 0 ? cited : retrieved;
+	const jumpKind = cited.length > 0 ? 'cited' : 'retrieved';
 
 	// App.tsx rebuilds the passage list from `agent.messages` on every stream
 	// chunk, so the array identity churns while its contents rarely change.
@@ -93,22 +157,27 @@ function DocumentView({ doc, passages }: { doc: DocumentRecord; passages: Passag
 		if (!root || !Content) return;
 		const result = applyHighlights(root, stablePassages);
 		setCited(result.anchors);
-		setRetrieved(result.matched.retrieved);
-		setCursor((current) => (current < result.anchors.length ? current : -1));
+		setRetrieved(result.retrievedAnchors);
+		setCursor((current) => (current < Math.max(result.anchors.length, result.retrievedAnchors.length) ? current : -1));
 
 		return clearHighlights;
 	}, [Content, stablePassages]);
 
-	// The first cited passage scrolls into view on its own; later ones are a
-	// click away. Ranges have no scrollIntoView, so the nearest element stands in.
-	// Only `cited` is a dependency on purpose: a jump should not re-fire when
-	// the cursor moves.
+	// The first passage scrolls into view on its own; later ones are a click
+	// away. Ranges have no scrollIntoView, so the nearest element stands in.
+	// Only the anchor lists are dependencies on purpose: a jump should not
+	// re-fire when the cursor moves, but it does when the first citation
+	// arrives for a document that was showing retrieved passages.
+	const lastJumpKind = useRef(jumpKind);
 	useEffect(() => {
-		if (cursor === -1 && cited.length > 0) jumpTo(0);
-	}, [cited]);
+		const switched = jumpKind !== lastJumpKind.current;
+		lastJumpKind.current = jumpKind;
+
+		if (jumps.length > 0 && (cursor === -1 || switched)) jumpTo(0);
+	}, [cited, retrieved]);
 
 	function jumpTo(index: number) {
-		const range = cited[index];
+		const range = jumps[index];
 
 		if (!range) return;
 		setCursor(index);
@@ -119,30 +188,9 @@ function DocumentView({ doc, passages }: { doc: DocumentRecord; passages: Passag
 
 	return (
 		<article className="mx-auto max-w-3xl p-6">
-			<header className="flex flex-col gap-3">
-				<h2 className="font-heading text-2xl font-semibold tracking-tight">{doc.title}</h2>
-				<div className="flex flex-wrap items-center gap-1.5">
-					<LevelBadge level={doc.level} />
-					{jurisdictionLabel(doc.level, doc.jurisdiction) && (
-						<Badge variant="secondary">{doc.jurisdiction}</Badge>
-					)}
-					{doc.citation && <Badge variant="outline">{doc.citation}</Badge>}
-					{doc.issuingBody && <Badge variant="outline">{doc.issuingBody}</Badge>}
-					{doc.sourceUrl && (
-						<Button variant="link" size="sm" className="h-auto px-1" asChild>
-							<a href={doc.sourceUrl} target="_blank" rel="noreferrer">
-								View official source
-								<ExternalLink data-icon="inline-end" />
-							</a>
-						</Button>
-					)}
-				</div>
-				{doc.authors && (
-					<p className="text-sm text-muted-foreground">Authors: {doc.authors}</p>
-				)}
-			</header>
+			<DocumentHeader doc={doc} />
 			<Separator className="my-5" />
-			{supportsHighlights() && (cited.length > 0 || retrieved > 0) && (
+			{supportsHighlights() && jumps.length > 0 && (
 				<div className="sticky top-2 z-10 mb-4 flex w-fit items-center gap-1 rounded-full border bg-background/95 py-1 pr-1 pl-3 text-xs shadow-sm backdrop-blur">
 					<Highlighter className="size-3.5 text-muted-foreground" />
 					{/* The swatches are the legend: each one is the color that kind of passage is painted in. */}
@@ -153,21 +201,21 @@ function DocumentView({ doc, passages }: { doc: DocumentRecord; passages: Passag
 								{cited.length} cited{cursor >= 0 && ` (${cursor + 1}/${cited.length})`}
 							</span>
 						)}
-						{retrieved > 0 && (
+						{retrieved.length > 0 && (
 							<span className="flex items-center gap-1 text-muted-foreground">
 								<Swatch kind="retrieved" />
-								{retrieved} retrieved
+								{retrieved.length} retrieved{jumpKind === 'retrieved' && cursor >= 0 && ` (${cursor + 1}/${retrieved.length})`}
 							</span>
 						)}
 					</span>
-					{cited.length > 1 && (
+					{jumps.length > 1 && (
 						<span className="ml-1 flex">
 							<Button
 								variant="ghost"
 								size="icon"
 								className="size-6"
-								aria-label="Previous cited passage"
-								onClick={() => jumpTo((cursor - 1 + cited.length) % cited.length)}
+								aria-label={`Previous ${jumpKind} passage`}
+								onClick={() => jumpTo((cursor - 1 + jumps.length) % jumps.length)}
 							>
 								<ChevronUp className="size-3.5" />
 							</Button>
@@ -175,8 +223,8 @@ function DocumentView({ doc, passages }: { doc: DocumentRecord; passages: Passag
 								variant="ghost"
 								size="icon"
 								className="size-6"
-								aria-label="Next cited passage"
-								onClick={() => jumpTo((cursor + 1) % cited.length)}
+								aria-label={`Next ${jumpKind} passage`}
+								onClick={() => jumpTo((cursor + 1) % jumps.length)}
 							>
 								<ChevronDown className="size-3.5" />
 							</Button>

@@ -2,13 +2,13 @@ import { start } from '@flue/runtime/node';
 import { afterAll, expect, it } from 'vitest';
 import { gatewayProvider } from '../lib/gateway.ts';
 import { FIXTURES } from './fixtures.ts';
-import { ask, highlightCalls, openedKeys, quotes, RegulationEval } from './harness.ts';
+import { ask, highlightCalls, highlightedKeys, quotes, RegulationEval } from './harness.ts';
 
 const flue = await start({ agents: [RegulationEval], providers: [gatewayProvider()] });
 
 afterAll(() => flue.stop());
 
-it('grounds a factual answer: searches, opens the right document, highlights verbatim quotes, and cites it', async () => {
+it('grounds a factual answer: searches, highlights verbatim quotes from the right document, and cites it', async () => {
 	const { reply, toolCalls } = await ask(
 		RegulationEval,
 		'Under the federal greenhouse gas reporting program, how many metric tons of CO2e per year must a facility emit before it has to report?',
@@ -17,13 +17,10 @@ it('grounds a factual answer: searches, opens the right document, highlights ver
 	const names = toolCalls.map((call) => call.name);
 
 	expect(names).toContain('search_laws');
-	expect(names).toContain('open_law');
-	expect(names.indexOf('search_laws')).toBeLessThan(names.indexOf('open_law'));
+	expect(names).toContain('highlight_passages');
+	expect(names.indexOf('search_laws')).toBeLessThan(names.indexOf('highlight_passages'));
 
-	expect(openedKeys(toolCalls)).toContain('federal/cfr/40-98-2.md');
-
-	// The reply reaches the user with the document opened alongside it.
-	expect(reply.data.openDocument).toEqual(expect.arrayContaining([expect.objectContaining({ key: 'federal/cfr/40-98-2.md' })]));
+	expect(highlightedKeys(toolCalls)).toContain('federal/cfr/40-98-2.md');
 
 	// Every highlighted passage is a real quote from the document it names.
 	const highlights = highlightCalls(toolCalls);
@@ -33,7 +30,7 @@ it('grounds a factual answer: searches, opens the right document, highlights ver
 	for (const highlight of highlights) {
 		const doc = FIXTURES.find((fixture) => fixture.key === highlight.key);
 
-		expect(doc, `highlight_passages named an unknown key ${highlight.key}`).toBeDefined();
+		expect(doc, `a highlight named an unknown key ${highlight.key}`).toBeDefined();
 		expect(highlight.passages.length).toBeGreaterThan(0);
 
 		for (const passage of highlight.passages) {

@@ -1,7 +1,7 @@
 import { start } from '@flue/runtime/node';
 import { afterAll, expect, it } from 'vitest';
 import { gatewayProvider } from '../lib/gateway.ts';
-import { ask, openedKeys, RegulationEval, searchCalls } from './harness.ts';
+import { ask, highlightedKeys, RegulationEval, searchCalls } from './harness.ts';
 
 const flue = await start({ agents: [RegulationEval], providers: [gatewayProvider()] });
 
@@ -17,7 +17,7 @@ it('scopes a question about the Bay Area air district to the regional level or j
 
 	expect(searches.length).toBeGreaterThan(0);
 	expect(searches.some((search) => search.level === 'regional' || search.jurisdiction === 'Bay Area')).toBe(true);
-	expect(openedKeys(toolCalls)).toContain('regional/bay-area/baaqmd-reg-2-rule-1.md');
+	expect(highlightedKeys(toolCalls)).toContain('regional/bay-area/baaqmd-reg-2-rule-1.md');
 	expect(reply.text).toMatch(/authority to construct/i);
 });
 
@@ -37,6 +37,6 @@ it('still finds the right document when the question names no place or level', a
 
 	expect(searches.length).toBeGreaterThan(0);
 	expect(searches.every((search) => search.jurisdiction === undefined || search.jurisdiction === 'Federal')).toBe(true);
-	expect(openedKeys(toolCalls)).toContain('federal/usc/42-7411.md');
+	expect(highlightedKeys(toolCalls)).toContain('federal/usc/42-7411.md');
 	expect(reply.text).toMatch(/best system of emission reduction/i);
 });

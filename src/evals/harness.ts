@@ -53,14 +53,20 @@ export function searchCalls(toolCalls: ToolCall[]) {
 	);
 }
 
-export function openedKeys(toolCalls: ToolCall[]) {
-	return toolCalls.flatMap((call) => (call.name === 'open_law' ? [parse(object({ key: string() }), call.input).key] : []));
+export function readKeys(toolCalls: ToolCall[]) {
+	return toolCalls.flatMap((call) => (call.name === 'read_law' ? [parse(object({ key: string() }), call.input).key] : []));
 }
 
 export function highlightCalls(toolCalls: ToolCall[]) {
 	return toolCalls.flatMap((call) =>
 		call.name === 'highlight_passages' ? [parse(object({ key: string(), passages: array(string()) }), call.input)] : [],
 	);
+}
+
+// The documents the reply is grounded in: the client opens the top search
+// matches itself, so the model's own signal of reliance is highlight_passages.
+export function highlightedKeys(toolCalls: ToolCall[]) {
+	return highlightCalls(toolCalls).map((call) => call.key);
 }
 
 // Whitespace-insensitive containment check for "verbatim" quotes.

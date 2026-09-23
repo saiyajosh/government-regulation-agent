@@ -1,4 +1,4 @@
-import { defineTool, useDataWriter, useModel, useTool } from '@flue/runtime';
+import { defineTool, useModel, useTool } from '@flue/runtime';
 import { array, number, object, optional, picklist, string } from 'valibot';
 import type { Library } from '../lib/documents.ts';
 import { GATEWAY_MODEL } from '../lib/gateway.ts';
@@ -15,23 +15,19 @@ export function regulationAgent(library: Library) {
 	// Claude Sonnet 5 via the BYOK gateway provider (see src/lib/gateway.ts).
 	useModel(GATEWAY_MODEL);
 
-	const writeOpenDocument = useDataWriter('openDocument', {
-		schema: object({ key: string(), title: string() }),
-	});
-
-	const tools = regulationTools(library, writeOpenDocument);
+	const tools = regulationTools(library);
 
 	useTool(tools.searchLaws);
-	useTool(tools.openLaw);
 	useTool(tools.readLaw);
 	useTool(tools.highlightPassages);
 
 	return REGULATION_INSTRUCTIONS;
 }
 
-export type WriteOpenDocument = (data: { key: string; title: string }) => void;
-
-export function regulationTools(library: Library, writeOpenDocument: WriteOpenDocument) {
+// The tools never open anything for the reader: the client opens the top
+// search matches in the Resources panel itself, and lets the user open the
+// rest, so the model only searches, reads, and marks passages.
+export function regulationTools(library: Library) {
 	const searchLaws = defineTool({
 		name: 'search_laws',
 		description: [
@@ -40,7 +36,8 @@ export function regulationTools(library: Library, writeOpenDocument: WriteOpenDo
 			'(AB 32, Health and Safety Code, CARB regulations), and the Bay Area (Air District rules and',
 			'Oakland, San Jose, and San Francisco codes). Phrase the query as a natural-language question or',
 			'description of the legal issue (not just keywords). Returns the most relevant documents',
-			'with their best-matching passages, citations, and keys for open_law. Optionally restrict',
+			'with their best-matching verbatim passages, citations, and keys for read_law and',
+			'highlight_passages. The top matches open automatically in the Resources panel. Optionally restrict',
 			'to a level of government (regional means an air district such as the Bay Area AQMD), or to a',
 			'jurisdiction exactly as it is named in the library (for example "Federal", "California",',
 			'"Bay Area", "Oakland, California", "San Jose, California").',
@@ -71,55 +68,18 @@ export function regulationTools(library: Library, writeOpenDocument: WriteOpenDo
 		},
 	});
 
-	// Opens the document for the reader but hands the model only what it asked
-	// for: a short document whole, otherwise the passages around the quotes it
-	// passed (or the opening page when it passed none). Library documents run
-	// to several megabytes, so the full body never travels in a tool result;
-	// read_law pages through the rest on demand.
-	const openLaw = defineTool({
-		name: 'open_law',
-		description: [
-			'Open a specific document by its key in the Resources panel so the user can read the full,',
-			'sourced text. Returns its metadata and, for a short document, its whole text. For a longer',
-			'document it returns only the passages around each verbatim quote in `passages` (which are',
-			'also highlighted for the reader as the document opens), or the first',
-			`${READ_CHUNK} characters when no passages are given; use read_law to read more of it.`,
-			'Pass the search_laws excerpts you plan to rely on as `passages` so the relevant text',
-			'comes back in one call.',
-		].join(' '),
-		input: object({ key: string(), passages: optional(array(string())) }),
-		async run({ data }) {
-			const doc = await library.get(data.key);
-
-			if (!doc) return { output: { error: `No document found for key "${data.key}".` } };
-
-			writeOpenDocument({ key: doc.key, title: doc.title });
-
-			return {
-				output: {
-					key: doc.key,
-					title: doc.title,
-					jurisdiction: doc.jurisdiction,
-					citation: doc.citation,
-					sourceUrl: doc.sourceUrl,
-					level: doc.level,
-					authors: doc.authors,
-					issuingBody: doc.issuingBody,
-					length: doc.body.length,
-					...excerptFor(doc.body, data.passages ?? []),
-				},
-			};
-		},
-	});
-
+	// Hands the model only what it asked for: a short document whole, otherwise
+	// the passages around a phrase or one page from an offset. Library documents
+	// run to several megabytes, so the full body never travels in a tool result.
 	const readLaw = defineTool({
 		name: 'read_law',
 		description: [
-			'Read more of a document that open_law returned only part of. Pass `find` to get the',
-			'passages around every place a word or phrase appears in it (case-insensitive), or',
-			`\`offset\` to read the next ${READ_CHUNK} characters from that character position (open_law and`,
-			'read_law report the document length and the end of each window). Read only what the',
-			'question needs: prefer `find` with a distinctive phrase over paging from the start.',
+			'Read a document by its key from search_laws. A short document comes back whole. For a',
+			'longer one, pass `find` to get the passages around every place a word or phrase appears',
+			`(case-insensitive), or \`offset\` to read the next ${READ_CHUNK} characters from that`,
+			'character position (each result reports the document length and the end of its window);',
+			`with neither it returns the first ${READ_CHUNK} characters. Read only what the question`,
+			'needs: prefer `find` with a distinctive phrase over paging from the start.',
 		].join(' '),
 		input: object({ key: string(), find: optional(string()), offset: optional(number()) }),
 		async run({ data }) {
@@ -127,9 +87,13 @@ export function regulationTools(library: Library, writeOpenDocument: WriteOpenDo
 
 			if (!doc) return { output: { error: `No document found for key "${data.key}".` } };
 
-			if (data.find) return { output: { key: doc.key, ...findPassages(doc.body, data.find) } };
+			const meta = { key: doc.key, title: doc.title, citation: doc.citation, length: doc.body.length };
 
-			return { output: { key: doc.key, ...readWindow(doc.body, data.offset) } };
+			if (data.find) return { output: { ...meta, complete: false, ...findPassages(doc.body, data.find) } };
+
+			if (data.offset === undefined && doc.body.length <= WHOLE_BODY_LIMIT) return { output: { ...meta, complete: true, body: doc.body } };
+
+			return { output: { ...meta, complete: false, ...readWindow(doc.body, data.offset) } };
 		},
 	});
 
@@ -139,10 +103,12 @@ export function regulationTools(library: Library, writeOpenDocument: WriteOpenDo
 	const highlightPassages = defineTool({
 		name: 'highlight_passages',
 		description: [
-			'Mark the passages of an open document that directly support your answer, so the reader',
-			'sees them highlighted in the Resources panel. Each passage must be a verbatim quote copied',
-			'from the document text: a sentence or a few consecutive sentences, never a paraphrase or a',
-			'summary. Call this after open_law and before writing your reply.',
+			'Mark the passages of a document that directly support your answer, so the reader sees',
+			'them highlighted in the Resources panel. Each passage must be a verbatim quote copied',
+			'from the document text (a search_laws excerpt or a sentence from read_law): a sentence or',
+			'a few consecutive sentences, never a paraphrase or a summary. Call it once per document',
+			'your answer relies on, before writing your reply. When several documents support the',
+			'answer, make all of those calls together in one turn, never one call per turn.',
 		].join(' '),
 		input: object({ key: string(), passages: array(string()) }),
 		async run({ data }) {
@@ -150,19 +116,7 @@ export function regulationTools(library: Library, writeOpenDocument: WriteOpenDo
 		},
 	});
 
-	return { searchLaws, openLaw, readLaw, highlightPassages };
-}
-
-// What open_law carries back: the whole body when it is short, otherwise a
-// window around each requested passage that occurs in it, falling back to the
-// opening page so the model always has something to read.
-function excerptFor(body: string, passages: string[]) {
-	if (body.length <= WHOLE_BODY_LIMIT) return { complete: true, body };
-	const found = passages.flatMap((passage) => findPassages(body, passage, 1).passages);
-
-	if (found.length === 0) return { complete: false, ...readWindow(body, 0) };
-
-	return { complete: false, passages: found };
+	return { searchLaws, readLaw, highlightPassages };
 }
 
 export const REGULATION_INSTRUCTIONS = [
@@ -179,19 +133,25 @@ export const REGULATION_INSTRUCTIONS = [
 	'jurisdiction to search_laws; otherwise search without filters and let relevance decide.',
 	'Every answer must be grounded in official government sources from the document library, and',
 	'you must show the user those sources. Follow this process on every substantive question:',
-	'1) Call search_laws (rephrase or narrow the query if the first pass misses). 2) Call open_law',
-	'on every document whose passages your answer actually relies on, so the full official text',
-	'appears in the Resources panel next to your reply, passing the search excerpts you plan to',
-	'rely on as `passages`, and read what comes back rather than relying on the search excerpt or',
-	'on memory. A long document comes back as windows around those passages rather than whole;',
-	'when the answer may sit elsewhere in it, call read_law (`find` a distinctive phrase, or page',
-	'by `offset`) and read only as much as the question needs. 3) Once you know which sentences answer the',
-	'question, call highlight_passages with those exact verbatim quotes (or pass them as',
-	'`passages` to open_law) so they are marked in the open document. 4) Write the answer from',
-	'what those documents say, and name each document (title and citation) it draws on. Do this',
+	'1) Call search_laws (rephrase or narrow the query if the first pass misses). When a question',
+	'spans several scopes or issues, issue all of those searches together in one turn. The top',
+	'matches of every search open automatically in the Resources panel, and the reader can open',
+	'any other result from the list under the search. 2) The excerpts search_laws returns are',
+	'verbatim passages of the documents. When they already contain the sentences that answer the',
+	'question, rely on them directly. When the answer may sit elsewhere in a document, call',
+	'read_law (`find` a distinctive phrase, or page by `offset`) and read only as much as the',
+	'question needs, issuing the read_law calls for different documents together in one turn.',
+	'3) Call highlight_passages for every document your answer relies on, with the exact verbatim',
+	'sentences it rests on, one call per document, all in the same turn. This is how the reader',
+	'sees which sentences matter, so never skip it. 4) Write the answer from what those documents',
+	'say, and name each document (title and citation) it draws on.',
+	'Tool calls that do not depend on each other must always go out together in one turn; every',
+	'extra round trip makes the reader wait, so the usual shape is one search turn, one',
+	'highlight_passages turn, then the answer, with a read_law turn between them only when the',
+	'excerpts do not settle the question. Do this',
 	'even when you already know the answer, and even for simple definitional questions, because',
 	'the point of this tool is to connect people to the primary source. Never skip search_laws',
-	'or open_law to save space: a short answer must still be a sourced answer. If nothing in the',
+	'or highlight_passages to save space: a short answer must still be a sourced answer. If nothing in the',
 	'library covers the question, say so plainly rather than guessing.',
 	'Your audience is the general public, not lawyers or policy specialists, so by default write',
 	'in a friendly, professional tone and keep answers concise and in plain English. Brevity applies',
@@ -201,7 +161,7 @@ export const REGULATION_INSTRUCTIONS = [
 	'a few plain words the first time it appears. Skip preamble, caveats that do not change the',
 	'answer, and exhaustive lists of every related provision; mention that more detail exists and',
 	'offer to go deeper instead. Cite sources in a light-touch way, for example "(California',
-	'Health and Safety Code § 38562, opened in Resources)". Quoting briefly in the reply is fine,',
+	'Health and Safety Code § 38562, open in Resources)". Quoting briefly in the reply is fine,',
 	'but always pass the full supporting sentences to highlight_passages so the reader can find',
 	'them in the source. Short paragraphs are preferred over long, dense responses. The chat',
 	'renders plain text, so do not use markdown syntax such as **bold**, headings, or bullet',
