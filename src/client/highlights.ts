@@ -25,12 +25,12 @@ function normalize(text: string) {
 }
 
 // Apply a set of passages to a rendered root. Returns one anchor range per
-// matched cited passage in document order (for jump-to navigation) and how
-// many passages of each kind matched.
+// matched passage of each kind in document order (for jump-to navigation)
+// and how many passages of each kind matched.
 export function applyHighlights(root: HTMLElement, passages: Passage[]) {
 	const registry = highlightRegistry();
 
-	if (!registry) return { anchors: [], matched: { cited: 0, retrieved: 0 } };
+	if (!registry) return { anchors: [], retrievedAnchors: [], matched: { cited: 0, retrieved: 0 } };
 
 	const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
 	const chars: { node: Text; offset: number }[] = [];
@@ -65,15 +65,14 @@ export function applyHighlights(root: HTMLElement, passages: Passage[]) {
 
 	const cited: Range[] = [];
 	const retrieved: Range[] = [];
+	// The first span of each matched passage, by kind.
 	const anchors: Range[] = [];
-	let retrievedMatched = 0;
+	const retrievedAnchors: Range[] = [];
 
 	for (const passage of distinct.values()) {
 		const found = locate(haystack, passage.text);
 
 		if (found.length === 0) continue;
-
-		if (passage.kind === 'retrieved') retrievedMatched += 1;
 
 		for (const [from, to] of found) {
 			const range = new Range();
@@ -81,7 +80,7 @@ export function applyHighlights(root: HTMLElement, passages: Passage[]) {
 			range.setEnd(chars[to - 1].node, chars[to - 1].offset + 1);
 			(passage.kind === 'cited' ? cited : retrieved).push(range);
 
-			if (passage.kind === 'cited' && found[0][0] === from) anchors.push(range);
+			if (found[0][0] === from) (passage.kind === 'cited' ? anchors : retrievedAnchors).push(range);
 		}
 	}
 
@@ -89,9 +88,11 @@ export function applyHighlights(root: HTMLElement, passages: Passage[]) {
 	citedHighlight.priority = 1;
 	registry.set(NAMES.cited, citedHighlight);
 	registry.set(NAMES.retrieved, new Highlight(...retrieved));
-	anchors.sort((a, b) => a.compareBoundaryPoints(Range.START_TO_START, b));
+	const byPosition = (a: Range, b: Range) => a.compareBoundaryPoints(Range.START_TO_START, b);
+	anchors.sort(byPosition);
+	retrievedAnchors.sort(byPosition);
 
-	return { anchors, matched: { cited: anchors.length, retrieved: retrievedMatched } };
+	return { anchors, retrievedAnchors, matched: { cited: anchors.length, retrieved: retrievedAnchors.length } };
 }
 
 // Where a passage sits in the normalized haystack, as [from, to) spans. The
