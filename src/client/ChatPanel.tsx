@@ -251,7 +251,7 @@ function describe(part: ToolPart) {
 			Icon: BookOpenText,
 			label: output === null ? 'Reading document' : output.title ? `Read ${output.title}` : 'Could not read document',
 			level: '',
-			chips: input?.find ? [output?.matches === undefined ? 'searching text' : `${plural(output.matches, 'match')} in text`] : [],
+			chips: input?.find ? [output?.matches === undefined ? 'searching text' : `${output.matches} ${output.matches === 1 ? 'match' : 'matches'} in text`] : [],
 			body: input?.find ?? (output?.title ? '' : (input?.key ?? '')),
 		};
 	}
