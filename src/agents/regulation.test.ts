@@ -46,8 +46,7 @@ function context<T>(data: T) {
 }
 
 describe('regulation tools', () => {
-	const opened: { key: string; title: string }[] = [];
-	const tools = regulationTools(memoryLibrary(DOCS), (doc) => opened.push(doc));
+	const tools = regulationTools(memoryLibrary(DOCS));
 
 	it('search_laws returns summaries with excerpts and honours the level filter', async () => {
 		const all = await tools.searchLaws.run(context({ query: 'facility emits metric tons report' }));
@@ -64,62 +63,40 @@ describe('regulation tools', () => {
 		expect(await tools.searchLaws.run(context({ query: 'emit particulate matter limits', level: 'state' as const }))).toEqual({ output: [] });
 	});
 
-	it('open_law returns a short document whole and tells the client to open it', async () => {
-		const result = await tools.openLaw.run(context({ key: 'federal/cfr/98-2.md' }));
-
-		expect(result).toEqual({
-			output: expect.objectContaining({ key: 'federal/cfr/98-2.md', title: 'Who must report', complete: true, body: DOCS[0].body, length: DOCS[0].body.length, sourceUrl: 'https://example.test/98.2' }),
+	it('read_law returns a short document whole', async () => {
+		expect(await tools.readLaw.run(context({ key: 'federal/cfr/98-2.md' }))).toEqual({
+			output: { key: 'federal/cfr/98-2.md', title: 'Who must report', citation: '40 CFR 98.2', length: DOCS[0].body.length, complete: true, body: DOCS[0].body },
 		});
-		expect(opened).toEqual([{ key: 'federal/cfr/98-2.md', title: 'Who must report' }]);
 	});
 
-	it('open_law returns only windows around the requested passages of a long document', async () => {
+	it('read_law returns the opening page of a long document, then pages by offset', async () => {
 		const body = DOCS[2].body;
 
 		expect(body.length).toBeGreaterThan(WHOLE_BODY_LIMIT);
 
-		const result = await tools.openLaw.run(context({ key: 'federal/fr/long.md', passages: ['applicability threshold is 25,000', 'not in the document'] }));
+		const first = await tools.readLaw.run(context({ key: 'federal/fr/long.md' }));
 
-		expect(result).toEqual({
-			output: expect.objectContaining({ key: 'federal/fr/long.md', complete: false, length: body.length, passages: [expect.objectContaining({ text: expect.stringContaining('25,000 units per year') })] }),
+		expect(first).toEqual({
+			output: expect.objectContaining({ key: 'federal/fr/long.md', title: 'A long rule', complete: false, offset: 0, end: READ_CHUNK, length: body.length, text: body.slice(0, READ_CHUNK) }),
 		});
-		expect(JSON.stringify(result).length).toBeLessThan(READ_CHUNK);
-		expect(opened.at(-1)).toEqual({ key: 'federal/fr/long.md', title: 'A long rule' });
-	});
-
-	it('open_law falls back to the opening page of a long document when no passage matches', async () => {
-		const result = await tools.openLaw.run(context({ key: 'federal/fr/long.md' }));
-
-		expect(result).toEqual({
-			output: expect.objectContaining({ complete: false, offset: 0, end: READ_CHUNK, length: DOCS[2].body.length, text: DOCS[2].body.slice(0, READ_CHUNK) }),
-		});
-	});
-
-	it('read_law pages by offset and finds phrases without opening anything', async () => {
-		const before = opened.length;
-		const body = DOCS[2].body;
+		expect(JSON.stringify(first).length).toBeLessThan(READ_CHUNK + 500);
 
 		expect(await tools.readLaw.run(context({ key: 'federal/fr/long.md', offset: READ_CHUNK }))).toEqual({
-			output: { key: 'federal/fr/long.md', offset: READ_CHUNK, end: READ_CHUNK * 2, length: body.length, text: body.slice(READ_CHUNK, READ_CHUNK * 2) },
+			output: expect.objectContaining({ offset: READ_CHUNK, end: READ_CHUNK * 2, text: body.slice(READ_CHUNK, READ_CHUNK * 2) }),
 		});
 		expect(await tools.readLaw.run(context({ key: 'federal/fr/long.md', offset: body.length + 50 }))).toEqual({
 			output: expect.objectContaining({ offset: body.length, end: body.length, text: '' }),
 		});
-
-		const found = await tools.readLaw.run(context({ key: 'federal/fr/long.md', find: 'APPLICABILITY THRESHOLD' }));
-
-		expect(found).toEqual({
-			output: { key: 'federal/fr/long.md', find: 'APPLICABILITY THRESHOLD', matches: 1, passages: [expect.objectContaining({ text: expect.stringContaining('25,000 units per year') })] },
-		});
-		expect(await tools.readLaw.run(context({ key: 'nope.md', find: 'x' }))).toEqual({ output: { error: 'No document found for key "nope.md".' } });
-		expect(opened).toHaveLength(before);
 	});
 
-	it('open_law reports an unknown key without opening anything', async () => {
-		const before = opened.length;
+	it('read_law finds the passages around a phrase', async () => {
+		expect(await tools.readLaw.run(context({ key: 'federal/fr/long.md', find: 'APPLICABILITY THRESHOLD' }))).toEqual({
+			output: expect.objectContaining({ key: 'federal/fr/long.md', complete: false, find: 'APPLICABILITY THRESHOLD', matches: 1, passages: [expect.objectContaining({ text: expect.stringContaining('25,000 units per year') })] }),
+		});
+	});
 
-		expect(await tools.openLaw.run(context({ key: 'nope.md' }))).toEqual({ output: { error: 'No document found for key "nope.md".' } });
-		expect(opened).toHaveLength(before);
+	it('read_law reports an unknown key', async () => {
+		expect(await tools.readLaw.run(context({ key: 'nope.md', find: 'x' }))).toEqual({ output: { error: 'No document found for key "nope.md".' } });
 	});
 
 	it('highlight_passages echoes the count and does nothing else', async () => {
@@ -132,13 +109,14 @@ describe('regulation tools', () => {
 describe('regulation instructions', () => {
 	it('ask for independent tool calls to be batched into one turn', () => {
 		expect(REGULATION_INSTRUCTIONS).toMatch(/issue all of those searches together in one turn/);
-		expect(REGULATION_INSTRUCTIONS).toMatch(/Open all of them at once in a single turn, never one per turn/);
+		expect(REGULATION_INSTRUCTIONS).toMatch(/read_law calls for different documents together in one turn/);
 		expect(REGULATION_INSTRUCTIONS).toMatch(/must always go out together in one turn/);
 	});
 
-	it('fold highlights into open_law and make highlight_passages the exception', () => {
-		expect(REGULATION_INSTRUCTIONS).toMatch(/pass the excerpts you plan to rely on as `passages` to each open_law call/);
-		expect(REGULATION_INSTRUCTIONS).toMatch(/Skip this step when open_law already carried every passage/);
-		expect(REGULATION_INSTRUCTIONS).toMatch(/one search turn, one open_law turn \(with passages\), then the answer/);
+	it('leave opening documents to the client and require highlight_passages', () => {
+		expect(REGULATION_INSTRUCTIONS).not.toMatch(/open_law/);
+		expect(REGULATION_INSTRUCTIONS).toMatch(/open automatically in the Resources panel/);
+		expect(REGULATION_INSTRUCTIONS).toMatch(/Call highlight_passages for every document your answer relies on/);
+		expect(REGULATION_INSTRUCTIONS).toMatch(/one search turn, one highlight_passages turn, then the answer/);
 	});
 });

@@ -86,7 +86,8 @@ Semantic search runs through a Cloudflare AI Search instance that indexes the
 R2 bucket directly: it chunks and embeds every Markdown file, re-syncs the
 bucket every 6 hours, and serves hybrid (vector + keyword) retrieval with
 reranking. The agent's `search_laws` tool queries it via the `AI_SEARCH`
-binding in `wrangler.jsonc`; `open_law` still reads the full document from R2.
+binding in `wrangler.jsonc`; `read_law` still reads the document from R2, and
+the client fetches the full text of an opened document from `/api/documents`.
 
 One-time setup (R2-backed instances need a service token so AI Search can
 read the bucket; the dashboard registers it for you the first time):

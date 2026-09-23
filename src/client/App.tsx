@@ -6,10 +6,11 @@ import { cn } from '@/lib/utils';
 import { ChatPanel } from './ChatPanel.tsx';
 import { ConversationsDrawer } from './ConversationsDrawer.tsx';
 import { useConversations } from './conversations.ts';
+import { useOpenDocuments } from './documents.ts';
 import { ResourcesPanel } from './ResourcesPanel.tsx';
 import { SelectionExplain } from './SelectionExplain.tsx';
 import type { Passage } from './highlights.ts';
-import type { DocumentRecord } from './types.ts';
+import type { DocumentMatch, DocumentRecord } from './types.ts';
 
 export function App() {
 	const history = useConversations();
@@ -34,50 +35,14 @@ export function App() {
 		if (text.trim()) void history.reportSnippet(history.currentId, text);
 	}, [agent.status, agent.messages, history]);
 
-	// Documents only enter the Resources panel when the agent opens them; there
-	// is no browsable library, so the panel is hidden until the first open_law.
-	const [openDocs, setOpenDocs] = useState<DocumentRecord[]>([]);
-	const [activeKey, setActiveKey] = useState<string | null>(null);
-	// Each open_law call is applied exactly once. `agent.messages` changes on
-	// every stream chunk and keeps the full history, so without this a tab the
-	// user closed would reopen (and steal focus) on the next message.
-	const appliedOpenLawCalls = useRef(new Set<string>());
-	// Switching conversations starts from a clean Resources panel; the applied
-	// set is cleared too so re-entering a conversation reopens its documents.
-	useEffect(() => {
-		appliedOpenLawCalls.current.clear();
-		setOpenDocs([]);
-		setActiveKey(null);
-	}, [history.currentId]);
-
-	// When the agent's open_law tool fires, it streams a named `openDocument`
-	// data part (see useDataWriter in the agent). The tool's own output also
-	// carries the full document, so we can open the tab without a second fetch.
-	useEffect(() => {
-		for (const message of agent.messages) {
-			for (const part of message.parts) {
-				if (part.type !== 'dynamic-tool') continue;
-
-				if (part.toolName !== 'open_law' || part.state !== 'output-available') continue;
-
-				if (appliedOpenLawCalls.current.has(part.toolCallId)) continue;
-				appliedOpenLawCalls.current.add(part.toolCallId);
-				// SAFETY: open_law's run() in regulation-agent.ts returns either the
-				// DocumentRecord it loaded or `{ error }`; dynamic-tool parts carry that
-				// output untyped.
-				const output = part.output as DocumentRecord | { error: string };
-
-				if ('error' in output) continue;
-				setOpenDocs((docs) => (docs.some((d) => d.key === output.key) ? docs : [...docs, output]));
-				setActiveKey(output.key);
-			}
-		}
-	}, [agent.messages]);
+	// Documents enter the Resources panel from search results (see documents.ts);
+	// there is no browsable library, so the panel is hidden until the first search.
+	const resources = useOpenDocuments(history.currentId, agent.messages);
 
 	// Passages to highlight, per document key, gathered from the same tool
 	// parts: search_laws excerpts are "retrieved", and quotes the agent names
-	// in open_law or highlight_passages are "cited". Replayed messages carry
-	// their tool parts too, so a reopened conversation keeps its highlights.
+	// in highlight_passages are "cited". Replayed messages carry their tool
+	// parts too, so a reopened conversation keeps its highlights.
 	const passages = useMemo(() => {
 		const byKey: Record<string, Passage[]> = {};
 
@@ -90,20 +55,19 @@ export function App() {
 				if (part.type !== 'dynamic-tool' || part.state !== 'output-available') continue;
 
 				if (part.toolName === 'search_laws') {
-					// SAFETY: search_laws' run() in regulation-agent.ts returns the
-					// DocumentMatch list, whose excerpts are { text, score }; dynamic-tool
-					// parts carry that output untyped.
-					const matches = part.output as { key: string; excerpts: { text: string }[] }[];
+					// SAFETY: search_laws' run() in regulation.ts returns the DocumentMatch
+					// list; dynamic-tool parts carry that output untyped.
+					const matches = part.output as DocumentMatch[];
 
 					for (const match of matches) add(match.key, 'retrieved', match.excerpts.map((e) => e.text));
 				}
 
-				if (part.toolName === 'open_law' || part.toolName === 'highlight_passages') {
-					// SAFETY: both tools' input schemas in regulation-agent.ts are
-					// { key, passages? }; dynamic-tool parts carry the input untyped.
-					const input = part.input as { key: string; passages?: string[] };
+				if (part.toolName === 'highlight_passages') {
+					// SAFETY: highlight_passages' input schema in regulation.ts is
+					// { key, passages }; dynamic-tool parts carry the input untyped.
+					const input = part.input as { key: string; passages: string[] };
 
-					if (input.passages?.length) add(input.key, 'cited', input.passages);
+					if (input.passages.length) add(input.key, 'cited', input.passages);
 				}
 			}
 		}
@@ -111,7 +75,9 @@ export function App() {
 		return byKey;
 	}, [agent.messages]);
 
-	const showResources = openDocs.length > 0;
+	const showResources = resources.docs.length > 0;
+	// The explain shortcut quotes from a document's text, so only loaded tabs count.
+	const readyDocs = resources.docs.filter((doc): doc is DocumentRecord & { status: 'ready' } => doc.status === 'ready');
 
 	return (
 		<div className="flex h-dvh flex-col bg-background text-foreground">
@@ -167,30 +133,25 @@ export function App() {
 					<ChatPanel
 						key={history.currentId}
 						agent={agent}
+						openKeys={resources.docs.map((doc) => doc.key)}
+						onOpenDocument={(match) => resources.open([match])}
 						className={showResources ? 'border-b md:border-r md:border-b-0' : undefined}
 					/>
 				)}
 				{showResources && (
 					<ResourcesPanel
-						openDocs={openDocs}
+						openDocs={resources.docs}
 						passages={passages}
-						activeKey={activeKey ?? openDocs[0].key}
-						onSelect={setActiveKey}
-						onClose={(key) =>
-							setOpenDocs((docs) => {
-								const next = docs.filter((doc) => doc.key !== key);
-
-								if (activeKey === key) setActiveKey(next.at(-1)?.key ?? null);
-
-								return next;
-							})
-						}
+						activeKey={resources.activeKey ?? resources.docs[0].key}
+						onSelect={resources.select}
+						onClose={resources.close}
+						onRetry={resources.retry}
 					/>
 				)}
 			</main>
 			<SelectionExplain
 				userId={history.userId}
-				openDocs={openDocs}
+				openDocs={readyDocs}
 				chatStarted={agent.messages.length > 0}
 			/>
 		</div>
